@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/logo.png" width="110" height="110" alt="StarPie Logo" />
+<img src="./assets/cover.v3.png" width="110" height="110" alt="StarPie Logo" />
 
 # StarPie (星盘)
 
@@ -85,7 +85,7 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 <div align="center">
   <img src="./attachments/第一张.gif" width="680" alt="鼠标手势快速呼出与动作触发演示" />
   <br/><br/>
-  <img src="./attachments/第二张.gif" width="680" alt="实际场景下手势操作与动作执行演示" />
+  <img src="./attachments/按键组合触发录制.gif" width="680" alt="按键组合触发录制演示" />
 </div>
 
 ---
@@ -98,6 +98,8 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 
 <div align="center">
   <img src="./attachments/第三张.gif" width="680" alt="二级轮盘展示" />
+   <br/><br/>
+  <img src="./attachments/程序拖拽配置界面.gif" width="680" alt="程序拖拽配置界面演示" />
 </div>
 
 ---
@@ -108,7 +110,7 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 支持在设置中开启/关闭，并可通过滑块微调外甩距离灵敏度（140px ~ 320px）；`v1.6.5` 起还可为外甩取消配置独立动作与常用预设，中心核圆取消仍可保持静默。
 
 <div align="center">
-  <img src="./attachments/02_outer_escape_cancel.gif" width="680" alt="顺势外甩脱离取消演示" />
+  <img src="./attachments/外甩取消.gif" width="680" alt="顺势外甩脱离取消演示" />
 </div>
 
 ---
@@ -119,11 +121,11 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 右侧提供 **实时交互预览画布**，支持缩放、平移、复位、点击选中与拖拽换位，调节参数即时可见；`v1.6.8` 增加屏幕边缘防溢出策略与 X / Y 安全边距。
 
 <div align="center">
-  <img src="./attachments/03_themes_and_shapes.gif" width="680" alt="轮盘形态与主题风格切换演示" />
+  <img src="./attachments/主题样式展示.gif" width="680" alt="轮盘形态与主题风格切换演示" />
   <br/><br/>
-  <img src="./attachments/03_1.gif" width="680" alt="多几何形态与视觉布局展示" />
+  <img src="./attachments/样式展示.gif" width="680" alt="多几何形态与视觉布局展示" />
   <br/><br/>
-  <img src="./attachments/03_2.gif" width="680" alt="预设主题风格与画布实时渲染演示" />
+  <img src="./attachments轮盘样式.gif" width="680" alt="预设主题风格与画布实时渲染演示" />
 </div>
 
 ---
@@ -135,6 +137,10 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 
 <div align="center">
   <img src="./attachments/04_custom_colors.gif" width="680" alt="自定义高级配色与预设管理演示" />
+   <br/><br/>
+  <img src="./attachments/中心图案调节.gif" width="680" alt="中心图案调节演示" />
+  <br/><br/>
+  <img src="./attachments/扇区样式定制.gif" width="680" alt="扇区样式定制演示" />
 </div>
 
 ---
@@ -182,11 +188,10 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 每个扇区可独立覆盖布局模式、字体、字号、文字颜色、图标大小、文字位置及 X / Y 偏移。
 
 <div align="center">
+   <img src="./attachments/程序拖拽配置界面.gif" width="680" alt="程序拖拽配置界面演示" />
+    <br/><br/>
   <img src="./attachments/07_1.gif" width="680" alt="应用程序智能检索与动作配置" />
 </div>
-
-> 🎬 **演示素材待录制**：建议录制“画布联动精调”页面的操作完整流程。
-
 ---
 
 ### 10. 🛡️ 场景隔离、全屏防误触与多语言
@@ -198,6 +203,8 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 
 <div align="center">
   <img src="./attachments/08_settings_and_i18n.gif" width="680" alt="防误触与多语言设置演示" />
+  <br/><br/>
+  <img src="./attachments/边缘呼出防溢出.gif" width="680" alt="边缘呼出防溢出配置" />
 </div>
 
 ---
@@ -209,7 +216,9 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 绘制时显示透明轨迹浮层、起点和释放提示，可调节分段灵敏度及提示文字方位；
 - 未达到拖动阈值的轻点会回放为原生鼠标点击，不影响日常操作。
 
-> 🎬 **演示素材待录制**：建议录制“中键绘制右→下轨迹触发动作、短点按正常穿透、灵敏度调整”的连续演示。
+<div align="center">
+<img src="./attachments/按键组合触发录制.gif" width="680" alt="按键组合触发录制演示" />
+</div>
 
 ---
 
@@ -237,7 +246,9 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 支持循环前进 / 后退布局、恢复平铺前位置、包含最小化窗口以及自定义进程排除名单；
 - 可将当前活动窗口移动到下一显示器、切换总在最前或调整窗口透明度。
 
-> 🎬 **演示素材待录制**：建议录制“轮盘切换任务栏窗口、4 窗口自动平铺、循环布局、恢复原位置、跨屏移动”。
+<div align="center">
+  <img src="./attachments/进程窗口切换.png" width="680" alt="进程窗口切换演示" />
+</div>
 
 ---
 
@@ -246,7 +257,11 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 可选 AI 视觉接口或自定义 HTTP OCR 服务，并提供语言包环境诊断与配置面板；
 - 识别结果支持自动复制、结果窗口展示、合并行、处理中日韩间空格以及浏览器搜索。
 
-> 🎬 **演示素材待录制**：建议录制“轮盘触发 OCR → 框选区域 → 本地识别 → 自动复制 / 展示结果”。
+<div align="center">
+  <img src="./attachments/OCR.gif" width="680" alt="OCR演示" />
+    <br/><br/>
+   <img src="./attachments/OCR接口配置.png" width="680" alt="OCR接口配置" />
+</div>
 
 ---
 
@@ -255,6 +270,10 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
 - 内置 GitHub Releases 更新检查，可选择更新通道、代理源、自定义代理并忽略指定版本；
 - 系统日志采用后台队列异步写入，可从设置中快速打开日志目录和当日日志；
 - 贡献者卡片默认使用离线名单，不在启动时主动联网，仅在用户手动刷新或检查更新时请求最新数据。
+
+<div align="center">
+  <img src="./attachments/系统内置更新与贡献展示.gif" width="680" alt="系统内置更新与贡献展示演示" />
+</div>
 
 ---
 
