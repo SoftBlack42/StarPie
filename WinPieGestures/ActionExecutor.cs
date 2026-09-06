@@ -1620,7 +1620,7 @@ public static class ActionExecutor
 		case "控制台":
 			Application.Current?.Dispatcher?.BeginInvoke((Action)delegate
 			{
-				App.MainSettingsWindow?.ShowSettings();
+				App.ShowSettingsWindow();
 			});
 			break;
 		case "settings":
