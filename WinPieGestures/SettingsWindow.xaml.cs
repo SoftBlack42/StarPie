@@ -327,6 +327,12 @@ public partial class SettingsWindow : Window
 
 	private bool _isClosingForRelease;
 
+	private bool _rawMouseInputHookAttached;
+
+	private bool _rawKeyboardInputHookAttached;
+
+	private volatile bool _resourcesReleased;
+
 	public static bool IsSilentLaunch()
 	{
 		return Environment.GetCommandLineArgs().Any((string a) =>
@@ -2463,9 +2469,22 @@ public partial class SettingsWindow : Window
 
 	private void ReleaseWindowResources()
 	{
-		_deferredCloseTimer?.Stop();
-		_deferredCloseTimer = null;
+		if (_resourcesReleased)
+		{
+			return;
+		}
+		_resourcesReleased = true;
+
+		if (_deferredCloseTimer != null)
+		{
+			_deferredCloseTimer.Stop();
+			_deferredCloseTimer.Tick -= DeferredCloseTimer_Tick;
+			_deferredCloseTimer = null;
+		}
 		_isClosingForRelease = true;
+
+		UnhookRawInputForSensorAndRecorder();
+
 		_lifetimeCts.Cancel();
 		_lifetimeCts.Dispose();
 
@@ -6437,30 +6456,70 @@ public partial class SettingsWindow : Window
 
 	private void HookRawInputForSensorAndRecorder()
 	{
-		if (App.MainMouseHook != null)
-		{
-			App.MainMouseHook.OnRawMouseButtonEvent += delegate(object? s, RawMouseEventArgs e)
-			{
-				if (e.IsButtonDown)
-				{
-					((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-					{
-						ProcessRawMouseButton(e.MouseButton, e.MouseData);
-					}, Array.Empty<object>());
-				}
-			};
-		}
-		if (App.MainKeyboardHook == null)
+		if (_resourcesReleased)
 		{
 			return;
 		}
-		App.MainKeyboardHook.OnRawKeyEvent += delegate(object? s, GlobalKeyEventArgs e)
+		if (!_rawMouseInputHookAttached && App.MainMouseHook != null)
 		{
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			App.MainMouseHook.OnRawMouseButtonEvent += MainMouseHook_OnRawMouseButtonEvent;
+			_rawMouseInputHookAttached = true;
+		}
+		if (!_rawKeyboardInputHookAttached && App.MainKeyboardHook != null)
+		{
+			App.MainKeyboardHook.OnRawKeyEvent += MainKeyboardHook_OnRawKeyEvent;
+			_rawKeyboardInputHookAttached = true;
+		}
+	}
+
+	private void MainMouseHook_OnRawMouseButtonEvent(object? sender, RawMouseEventArgs e)
+	{
+		if (_resourcesReleased || !e.IsButtonDown)
+		{
+			return;
+		}
+		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+		{
+			if (!_resourcesReleased)
+			{
+				ProcessRawMouseButton(e.MouseButton, e.MouseData);
+			}
+		}, Array.Empty<object>());
+	}
+
+	private void MainKeyboardHook_OnRawKeyEvent(object? sender, GlobalKeyEventArgs e)
+	{
+		if (_resourcesReleased)
+		{
+			return;
+		}
+		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+		{
+			if (!_resourcesReleased)
 			{
 				ProcessRawKeyEvent(e);
-			}, Array.Empty<object>());
-		};
+			}
+		}, Array.Empty<object>());
+	}
+
+	private void UnhookRawInputForSensorAndRecorder()
+	{
+		if (_rawMouseInputHookAttached)
+		{
+			if (App.MainMouseHook != null)
+			{
+				App.MainMouseHook.OnRawMouseButtonEvent -= MainMouseHook_OnRawMouseButtonEvent;
+			}
+			_rawMouseInputHookAttached = false;
+		}
+		if (_rawKeyboardInputHookAttached)
+		{
+			if (App.MainKeyboardHook != null)
+			{
+				App.MainKeyboardHook.OnRawKeyEvent -= MainKeyboardHook_OnRawKeyEvent;
+			}
+			_rawKeyboardInputHookAttached = false;
+		}
 	}
 
 	private void UpdateTriggerBadgeDisplay()
