@@ -317,6 +317,9 @@ public partial class SettingsWindow : Window
 
 	private bool _isUiInitializing = false;
 	private bool _isUiInitialized = false;
+	private bool _isLoadingAutoStartState = false;
+	private bool _loadedAutoStartEnabled;
+	private bool _loadedAutoStartAsAdmin;
 
 	private static int _lastSelectedTabIndex;
 
@@ -1136,10 +1139,20 @@ public partial class SettingsWindow : Window
 		}
 
 		// AutoStart
-		AutoStartCheckBox.IsChecked = ConfigManager.IsAutoStartEnabled();
-		if (AutoStartAsAdminCheckBox != null)
+		_isLoadingAutoStartState = true;
+		try
 		{
-			AutoStartAsAdminCheckBox.IsChecked = ConfigManager.CurrentConfig.AutoStartAsAdmin;
+			_loadedAutoStartEnabled = ConfigManager.IsAutoStartEnabled();
+			_loadedAutoStartAsAdmin = ConfigManager.CurrentConfig.AutoStartAsAdmin;
+			AutoStartCheckBox.IsChecked = _loadedAutoStartEnabled;
+			if (AutoStartAsAdminCheckBox != null)
+			{
+				AutoStartAsAdminCheckBox.IsChecked = _loadedAutoStartAsAdmin;
+			}
+		}
+		finally
+		{
+			_isLoadingAutoStartState = false;
 		}
 
 		// Language & Previews
@@ -10967,28 +10980,38 @@ public partial class SettingsWindow : Window
 
 	private void AutoStartCheckBox_Changed(object sender, RoutedEventArgs e)
 	{
-		if (!_isUpdatingUi)
+		if (!_isUpdatingUi && !_isUiInitializing && !_isLoadingAutoStartState)
 		{
 			bool valueOrDefault = AutoStartCheckBox.IsChecked == true;
 			bool asAdmin = (AutoStartAsAdminCheckBox?.IsChecked == true);
+			if (valueOrDefault == _loadedAutoStartEnabled && asAdmin == _loadedAutoStartAsAdmin)
+			{
+				return;
+			}
 			ConfigManager.SetAutoStart(valueOrDefault, asAdmin);
+			_loadedAutoStartEnabled = valueOrDefault;
+			_loadedAutoStartAsAdmin = asAdmin;
 			SyncUiToConfigAndSave();
 		}
 	}
 
 	private void AutoStartAsAdminCheckBox_Changed(object sender, RoutedEventArgs e)
 	{
-		if (!_isUpdatingUi)
+		if (!_isUpdatingUi && !_isUiInitializing && !_isLoadingAutoStartState)
 		{
 			bool flag = (AutoStartAsAdminCheckBox?.IsChecked == true);
+			bool enabled = AutoStartCheckBox.IsChecked == true;
+			if (flag == _loadedAutoStartAsAdmin && enabled == _loadedAutoStartEnabled)
+			{
+				return;
+			}
 			if (ConfigManager.CurrentConfig != null)
 			{
 				ConfigManager.CurrentConfig.AutoStartAsAdmin = flag;
 			}
-			if (AutoStartCheckBox.IsChecked == true)
-			{
-				ConfigManager.SetAutoStart(enable: true, flag);
-			}
+			ConfigManager.SetAutoStart(enabled, flag);
+			_loadedAutoStartEnabled = enabled;
+			_loadedAutoStartAsAdmin = flag;
 			SyncUiToConfigAndSave();
 		}
 	}
