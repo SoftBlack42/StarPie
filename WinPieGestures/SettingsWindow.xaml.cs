@@ -331,6 +331,8 @@ public partial class SettingsWindow : Window
 
 	private bool _rawKeyboardInputHookAttached;
 
+	private bool _exclusiveKeyboardHookAttached;
+
 	private volatile bool _resourcesReleased;
 
 	public static bool IsSilentLaunch()
@@ -401,12 +403,7 @@ public partial class SettingsWindow : Window
 			UpdateLogoTheme(isDark);
 			App.ApplyTrayTheme(isDark);
 
-			if (App.MainKeyboardHook != null)
-			{
-				App.MainKeyboardHook.OnExclusiveRecordCompleted += MainKeyboardHook_OnExclusiveRecordCompleted;
-				App.MainKeyboardHook.OnExclusiveRecordCancelled += MainKeyboardHook_OnExclusiveRecordCancelled;
-				App.MainKeyboardHook.OnExclusiveRecordModifiersChanged += MainKeyboardHook_OnExclusiveRecordModifiersChanged;
-			}
+			HookExclusiveKeyboardRecordingEvents();
 			if (FocusHotkeyRecorder != null)
 			{
 				FocusHotkeyRecorder.HotkeyChanged += FocusHotkeyRecorder_HotkeyChanged;
@@ -2495,14 +2492,40 @@ public partial class SettingsWindow : Window
 		_downloadCts?.Dispose();
 		_downloadCts = null;
 
-		if (_isUiInitialized && App.MainKeyboardHook != null)
+		UnhookExclusiveKeyboardRecordingEvents();
+		CancelExclusiveRecordingIfActive();
+		DetachTileCycleItems();
+		DisposeSlotViewModels();
+	}
+
+	// 使用独立订阅状态，不依赖 _isUiInitialized，确保初始化中途异常时也能解除全局 Hook 引用。
+	private void HookExclusiveKeyboardRecordingEvents()
+	{
+		if (_exclusiveKeyboardHookAttached || App.MainKeyboardHook == null)
+		{
+			return;
+		}
+
+		App.MainKeyboardHook.OnExclusiveRecordCompleted += MainKeyboardHook_OnExclusiveRecordCompleted;
+		App.MainKeyboardHook.OnExclusiveRecordCancelled += MainKeyboardHook_OnExclusiveRecordCancelled;
+		App.MainKeyboardHook.OnExclusiveRecordModifiersChanged += MainKeyboardHook_OnExclusiveRecordModifiersChanged;
+		_exclusiveKeyboardHookAttached = true;
+	}
+
+	private void UnhookExclusiveKeyboardRecordingEvents()
+	{
+		if (!_exclusiveKeyboardHookAttached)
+		{
+			return;
+		}
+
+		if (App.MainKeyboardHook != null)
 		{
 			App.MainKeyboardHook.OnExclusiveRecordCompleted -= MainKeyboardHook_OnExclusiveRecordCompleted;
 			App.MainKeyboardHook.OnExclusiveRecordCancelled -= MainKeyboardHook_OnExclusiveRecordCancelled;
 			App.MainKeyboardHook.OnExclusiveRecordModifiersChanged -= MainKeyboardHook_OnExclusiveRecordModifiersChanged;
 		}
-		CancelExclusiveRecordingIfActive();
-		DisposeSlotViewModels();
+		_exclusiveKeyboardHookAttached = false;
 	}
 
 	private void ProfilesListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -13722,12 +13745,27 @@ public partial class SettingsWindow : Window
 				items.Add(item);
 			}
 		}
+		DetachTileCycleItems();
 		_cycleItems = items;
 		if (TileCycleListBox != null)
 		{
 			TileCycleListBox.ItemsSource = null;
 			TileCycleListBox.ItemsSource = _cycleItems;
 		}
+	}
+
+	// WPF 默认集合视图可能延长 ItemsSource 生命周期；必须先解除项事件，避免其反向保活整个窗口。
+	private void DetachTileCycleItems()
+	{
+		if (TileCycleListBox != null)
+		{
+			TileCycleListBox.ItemsSource = null;
+		}
+		foreach (LayoutCycleItem item in _cycleItems)
+		{
+			item.PropertyChanged -= LayoutCycleItem_PropertyChanged;
+		}
+		_cycleItems.Clear();
 	}
 
 	/// <summary>勾选/取消任意一项立即持久化（循环范围即时生效）。</summary>
