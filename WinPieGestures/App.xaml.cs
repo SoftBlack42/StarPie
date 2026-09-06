@@ -17,6 +17,10 @@ public partial class App : Application
 	private static EventWaitHandle? _instanceWakeEvent;
 	private static RegisteredWaitHandle? _waitHandleRegistration;
 	private static bool _isDuplicateInstance;
+	private static bool _isExiting;
+	private static bool _startupCompleted;
+	private static bool _pendingSettingsRequest;
+	private static int _pendingSettingsTabIndex = -1;
 
 	private const string MutexName = "Global\\StarPie_SingleInstance_Mutex_9B8A7C";
 	private const string WakeEventName = "Global\\StarPie_Wakeup_Event_9B8A7C";
@@ -26,6 +30,8 @@ public partial class App : Application
 	public static MouseHook? MainMouseHook { get; private set; }
 	public static KeyboardHook? MainKeyboardHook { get; private set; }
 	public static SettingsWindow? MainSettingsWindow { get; private set; }
+	public static TrayController? MainTrayController { get; private set; }
+	public static bool IsExiting => _isExiting;
 
 	[DllImport("shell32.dll", SetLastError = true)]
 	private static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
@@ -144,14 +150,24 @@ public partial class App : Application
 			MainKeyboardHook.Start();
 			AppLogger.LogInfo("MainKeyboardHook started");
 			MainGestureController = new GestureController(MainMouseHook, MainKeyboardHook);
-			MainSettingsWindow = new SettingsWindow();
-			base.MainWindow = MainSettingsWindow;
-			if (!SettingsWindow.IsSilentLaunch())
+			MainTrayController = new TrayController();
+			MainTrayController.OpenSettingsRequested += ShowSettingsWindow;
+			MainTrayController.TogglePauseRequested += TogglePauseGestures;
+			MainTrayController.ElevateRequested += RestartElevated;
+			MainTrayController.ExitRequested += ExitApplication;
+			MainTrayController.Initialize(MainMouseHook.IsPaused, IsCurrentThemeDark());
+			AppLogger.LogInfo("TrayController initialized");
+			_startupCompleted = true;
+			if (!SettingsWindow.IsSilentLaunch() || _pendingSettingsRequest)
 			{
-				MainSettingsWindow.Show();
+				int requestedTab = _pendingSettingsRequest ? _pendingSettingsTabIndex : -1;
+				_pendingSettingsRequest = false;
+				_pendingSettingsTabIndex = -1;
+				ShowSettingsWindow(requestedTab);
 			}
 			else
 			{
+				AppLogger.LogInfo("Silent launch: SettingsWindow creation deferred until first use");
 				// 静默启动或开机自启时，在挂载完轻量级钩子后等待后台就绪（1.5秒后）执行一次工作集规整，将静默占用压至极限
 				_ = System.Threading.Tasks.Task.Run(async () =>
 				{
@@ -176,11 +192,40 @@ public partial class App : Application
 
 	public static void WakeUpSettingsWindow()
 	{
-		if (MainSettingsWindow == null)
+		ShowSettingsWindow();
+	}
+
+	public static void ShowSettingsWindow(int tabIndex = -1)
+	{
+		if (_isExiting || Application.Current == null)
 		{
 			return;
 		}
-		MainSettingsWindow.ShowSettings();
+		if (!Application.Current.Dispatcher.CheckAccess())
+		{
+			Application.Current.Dispatcher.BeginInvoke((Action)(() => ShowSettingsWindow(tabIndex)));
+			return;
+		}
+		if (!_startupCompleted)
+		{
+			_pendingSettingsRequest = true;
+			if (tabIndex >= 0)
+			{
+				_pendingSettingsTabIndex = tabIndex;
+			}
+			return;
+		}
+
+		if (MainSettingsWindow == null)
+		{
+			SettingsWindow window = new SettingsWindow();
+			window.Closed += SettingsWindow_Closed;
+			MainSettingsWindow = window;
+			Application.Current.MainWindow = window;
+			AppLogger.LogInfo("SettingsWindow created on demand");
+		}
+
+		MainSettingsWindow.ShowSettings(tabIndex);
 		try
 		{
 			nint handle = new WindowInteropHelper(MainSettingsWindow).Handle;
@@ -192,6 +237,95 @@ public partial class App : Application
 		catch
 		{
 		}
+	}
+
+	private static void SettingsWindow_Closed(object? sender, EventArgs e)
+	{
+		if (sender is not SettingsWindow closedWindow)
+		{
+			return;
+		}
+		closedWindow.Closed -= SettingsWindow_Closed;
+		if (ReferenceEquals(MainSettingsWindow, closedWindow))
+		{
+			MainSettingsWindow = null;
+		}
+		if (Application.Current != null && ReferenceEquals(Application.Current.MainWindow, closedWindow))
+		{
+			Application.Current.MainWindow = null;
+		}
+		AppLogger.LogInfo("SettingsWindow closed and released");
+		if (!_isExiting && Application.Current != null)
+		{
+			Application.Current.Dispatcher.BeginInvoke(
+				(Action)(() => MemoryOptimizer.TrimMemory(force: false)),
+				DispatcherPriority.ApplicationIdle);
+		}
+	}
+
+	public static void RefreshTrayMenu()
+	{
+		MainTrayController?.RefreshMenu();
+	}
+
+	public static void ApplyTrayTheme(bool isDark)
+	{
+		MainTrayController?.ApplyTheme(isDark);
+	}
+
+	public static void ShowTrayBalloon(int timeout, string title, string message, System.Windows.Forms.ToolTipIcon icon)
+	{
+		MainTrayController?.ShowBalloonTip(timeout, title, message, icon);
+	}
+
+	private static bool IsCurrentThemeDark()
+	{
+		string theme = ConfigManager.CurrentConfig?.AppTheme ?? "System";
+		if (string.Equals(theme, "System", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(theme))
+		{
+			return AppThemeManager.IsWindowsInDarkTheme();
+		}
+		return !string.Equals(theme, "Light", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static void TogglePauseGestures()
+	{
+		if (MainMouseHook == null)
+		{
+			return;
+		}
+		MainMouseHook.IsPaused = !MainMouseHook.IsPaused;
+		MainTrayController?.UpdatePauseState(MainMouseHook.IsPaused);
+	}
+
+	public static void RestartElevated()
+	{
+		try
+		{
+			string fileName = Environment.ProcessPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StarPie.exe");
+			Process.Start(new ProcessStartInfo
+			{
+				FileName = fileName,
+				UseShellExecute = true,
+				Verb = "runas"
+			});
+			ExitApplication();
+		}
+		catch (Exception ex)
+		{
+			MessageBox.Show("提权重启失败或已取消: " + ex.Message, "管理员提权", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+		}
+	}
+
+	public static void ExitApplication()
+	{
+		if (_isExiting)
+		{
+			return;
+		}
+		_isExiting = true;
+		MainTrayController?.Dispose();
+		Application.Current?.Shutdown();
 	}
 
 	private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -232,6 +366,9 @@ public partial class App : Application
 			return;
 		}
 		AppLogger.LogInfo("=== StarPie Exiting ===");
+		_isExiting = true;
+		MainTrayController?.Dispose();
+		MainTrayController = null;
 		// 退出前自动还原所有窗口到首次平铺前的样式
 		try
 		{

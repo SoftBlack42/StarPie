@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -22,7 +21,6 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using System.Windows.Resources;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using System.Net.Http;
@@ -79,9 +77,7 @@ public partial class SettingsWindow : Window
 
 	private bool _isRecordingTrigger;
 
-	private NotifyIcon _notifyIcon;
-
-	private bool _isClosingFromTray;
+	private System.Windows.Media.Brush? _originalBadgeBorderBrush;
 
 	private WheelProfile? _selectedProfile;
 
@@ -180,6 +176,7 @@ public partial class SettingsWindow : Window
 
 	private ReleaseInfo? _latestReleaseInfo = null;
 	private CancellationTokenSource? _downloadCts = null;
+	private readonly CancellationTokenSource _lifetimeCts = new CancellationTokenSource();
 	private string? _downloadedZipPath = null;
 
 	private static readonly string[] Directions4 = new string[4] { "右 (E / 0°)", "下 (S / 90°)", "左 (W / 180°)", "上 (N / 270°)" };
@@ -312,8 +309,6 @@ public partial class SettingsWindow : Window
 		}
 	};
 
-	private ToolStripMenuItem? _pauseResumeMenuItem;
-
 	private DispatcherTimer? _autoSaveDebounceTimer;
 
 	private bool _isChangingSectorCount;
@@ -322,6 +317,12 @@ public partial class SettingsWindow : Window
 
 	private bool _isUiInitializing = false;
 	private bool _isUiInitialized = false;
+
+	private static int _lastSelectedTabIndex;
+
+	private DispatcherTimer? _deferredCloseTimer;
+
+	private bool _isClosingForRelease;
 
 	public static bool IsSilentLaunch()
 	{
@@ -389,7 +390,7 @@ public partial class SettingsWindow : Window
 			UpdateSidebarThemeVisualState(ConfigManager.CurrentConfig?.AppTheme ?? "System");
 			bool isDark = IsCurrentThemeDark();
 			UpdateLogoTheme(isDark);
-			ApplyTrayMenuTheme(isDark);
+			App.ApplyTrayTheme(isDark);
 
 			if (App.MainKeyboardHook != null)
 			{
@@ -435,7 +436,6 @@ public partial class SettingsWindow : Window
 		catch
 		{
 		}
-		InitializeTrayIcon();
 		string text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.0");
 		if (SidebarVersionText != null)
 		{
@@ -460,7 +460,7 @@ public partial class SettingsWindow : Window
 			UpdateSidebarThemeVisualState(ConfigManager.CurrentConfig?.AppTheme ?? "System");
 			bool isDark = IsCurrentThemeDark();
 			UpdateLogoTheme(isDark);
-			ApplyTrayMenuTheme(isDark);
+			App.ApplyTrayTheme(isDark);
 			if (AppearanceSettingsGrid.Visibility == Visibility.Visible)
 			{
 				RenderLiveWheelPreview();
@@ -471,13 +471,30 @@ public partial class SettingsWindow : Window
 			{
 				Task.Run(async () =>
 				{
-					await Task.Delay(2500);
-					await Dispatcher.InvokeAsync(() => CheckForUpdateInternalAsync(silent: true));
+					try
+					{
+						await Task.Delay(2500, _lifetimeCts.Token);
+						if (!_lifetimeCts.IsCancellationRequested)
+						{
+							await Dispatcher.InvokeAsync(() => CheckForUpdateInternalAsync(silent: true));
+						}
+					}
+					catch (OperationCanceledException)
+					{
+					}
 				});
 			}
 		};
 		base.Deactivated += delegate { CancelExclusiveRecordingIfActive(); };
-		base.Closing += delegate { CancelExclusiveRecordingIfActive(); };
+	}
+
+	private void CancelDeferredClose()
+	{
+		_deferredCloseTimer?.Stop();
+		_deferredCloseTimer = null;
+		_isClosingForRelease = false;
+		BeginAnimation(UIElement.OpacityProperty, null);
+		Opacity = 1.0;
 	}
 
 	private void SidebarToggleButton_Click(object sender, RoutedEventArgs e)
@@ -758,7 +775,7 @@ public partial class SettingsWindow : Window
 		UpdateSidebarThemeVisualState(ConfigManager.CurrentConfig.AppTheme ?? "System");
 		bool isDark = IsCurrentThemeDark();
 		UpdateLogoTheme(isDark);
-		ApplyTrayMenuTheme(isDark);
+		App.ApplyTrayTheme(isDark);
 		ReloadThemePresets();
 		SetComboBoxSelectedValue(ThemeComboBox, ConfigManager.CurrentConfig.Theme);
 		SetComboBoxSelectedValue(UiStyleComboBox, ConfigManager.CurrentConfig.UiStyle);
@@ -1184,273 +1201,6 @@ public partial class SettingsWindow : Window
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool SetForegroundWindow(nint hWnd);
-
-	[DllImport("user32.dll", SetLastError = true)]
-	[return: MarshalAs(UnmanagedType.Bool)]
-	private static extern bool ChangeWindowMessageFilter(uint message, uint dwFlag);
-
-	[DllImport("user32.dll", SetLastError = true)]
-	[return: MarshalAs(UnmanagedType.Bool)]
-	private static extern bool ChangeWindowMessageFilterEx(nint hWnd, uint message, uint action, nint changeInfo);
-
-	private const uint MSGFLT_ADD = 1;
-	private const uint MSGFLT_ALLOW = 1;
-
-	private void InitializeTrayIcon()
-	{
-		Icon icon = null;
-		System.Drawing.Size smallSize = System.Windows.Forms.SystemInformation.SmallIconSize;
-		if (smallSize.Width <= 0 || smallSize.Height <= 0) smallSize = new System.Drawing.Size(16, 16);
-
-		// 1. First priority: Load dedicated ultra-sharp circular wheel tray icon from pack resources
-		try
-		{
-			StreamResourceInfo resourceStream = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/tray_icon.ico"));
-			if (resourceStream != null)
-			{
-				using Stream stream = resourceStream.Stream;
-				icon = new Icon(stream, smallSize);
-			}
-		}
-		catch
-		{
-		}
-
-		// 2. Secondary priority: Load tray_icon.ico from file on disk
-		if (icon == null)
-		{
-			try
-			{
-				string trayPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tray_icon.ico");
-				if (File.Exists(trayPath))
-				{
-					using var fs = File.OpenRead(trayPath);
-					icon = new Icon(fs, smallSize);
-				}
-			}
-			catch
-			{
-			}
-		}
-
-		// 3. Third priority: Load app_icon.ico with exact smallSize matching native DPI
-		if (icon == null)
-		{
-			try
-			{
-				StreamResourceInfo resourceStream = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/app_icon.ico"));
-				if (resourceStream != null)
-				{
-					using Stream stream = resourceStream.Stream;
-					icon = new Icon(stream, smallSize);
-				}
-			}
-			catch
-			{
-			}
-		}
-
-		// 4. Fourth priority: app_icon.ico on disk
-		if (icon == null)
-		{
-			try
-			{
-				string text2 = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
-				if (File.Exists(text2))
-				{
-					using var fs = File.OpenRead(text2);
-					icon = new Icon(fs, smallSize);
-				}
-			}
-			catch
-			{
-			}
-		}
-
-		// 5. Fallback: Process associated icon
-		if (icon == null)
-		{
-			try
-			{
-				string text = Environment.ProcessPath;
-				if (string.IsNullOrEmpty(text))
-				{
-					text = Process.GetCurrentProcess().MainModule?.FileName;
-				}
-				if (!string.IsNullOrEmpty(text) && File.Exists(text))
-				{
-					icon = System.Drawing.Icon.ExtractAssociatedIcon(text);
-				}
-			}
-			catch
-			{
-			}
-		}
-
-		if (icon == null)
-		{
-			icon = SystemIcons.Application;
-		}
-		_notifyIcon = new NotifyIcon
-		{
-			Icon = icon,
-			Visible = true,
-			Text = I18n.T("TrayTooltip")
-		};
-		_notifyIcon.DoubleClick += delegate
-		{
-			ShowSettings();
-		};
-		BuildTrayContextMenu();
-		ApplyTrayUipiProtection();
-	}
-
-	private void ApplyTrayUipiProtection()
-	{
-		try
-		{
-			// 1. 进程级放行来自标准权限 Explorer.exe 的拖放、复制、广播与通知消息通道
-			uint[] globalMessages = new uint[]
-			{
-				0x0233, // WM_DROPFILES
-				0x004A, // WM_COPYDATA
-				0x0049, // WM_COPYGLOBALDATA
-				0x001A, // WM_SETTINGCHANGE
-				0x007E, // WM_DISPLAYCHANGE
-				0x0111, // WM_COMMAND
-				0x0400, // WM_USER
-				0x0401  // WM_USER + 1
-			};
-
-			foreach (uint msg in globalMessages)
-			{
-				try
-				{
-					ChangeWindowMessageFilter(msg, MSGFLT_ADD);
-				}
-				catch { }
-			}
-
-			// 2. 获取 NotifyIcon 内部原生 NativeWindow 句柄并放行句柄级消息过滤
-			if (_notifyIcon != null)
-			{
-				try
-				{
-					var windowField = typeof(NotifyIcon).GetField("window", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-					if (windowField?.GetValue(_notifyIcon) is NativeWindow nativeWindow && nativeWindow.Handle != IntPtr.Zero)
-					{
-						nint trayHwnd = nativeWindow.Handle;
-						uint[] hwndMessages = new uint[]
-						{
-							0x0233, // WM_DROPFILES
-							0x004A, // WM_COPYDATA
-							0x0049, // WM_COPYGLOBALDATA
-							0x001A, // WM_SETTINGCHANGE
-							0x007E, // WM_DISPLAYCHANGE
-							0x0111, // WM_COMMAND
-							0x0400, // WM_USER
-							0x0401, // WM_USER + 1
-							0x0200, // WM_MOUSEMOVE
-							0x0201, // WM_LBUTTONDOWN
-							0x0202, // WM_LBUTTONUP
-							0x0204, // WM_RBUTTONDOWN
-							0x0205  // WM_RBUTTONUP
-						};
-
-						foreach (uint msg in hwndMessages)
-						{
-							try
-							{
-								ChangeWindowMessageFilterEx(trayHwnd, msg, MSGFLT_ALLOW, IntPtr.Zero);
-							}
-							catch { }
-						}
-					}
-				}
-				catch { }
-			}
-		}
-		catch { }
-	}
-
-	private void BuildTrayContextMenu()
-	{
-		if (_notifyIcon != null)
-		{
-			ContextMenuStrip contextMenuStrip = new ContextMenuStrip
-			{
-				ShowImageMargin = false,
-				ShowCheckMargin = false,
-				Font = new System.Drawing.Font("Segoe UI", 9.5f, System.Drawing.FontStyle.Regular),
-				Padding = new System.Windows.Forms.Padding(3, 4, 3, 4)
-			};
-
-			ToolStripMenuItem versionItem = new ToolStripMenuItem("StarPie v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.0"))
-			{
-				Enabled = false,
-				Font = new System.Drawing.Font("Segoe UI", 9.5f, System.Drawing.FontStyle.Bold),
-				Padding = new System.Windows.Forms.Padding(12, 6, 12, 6)
-			};
-			contextMenuStrip.Items.Add(versionItem);
-
-			var sep1 = new ToolStripSeparator { Margin = new System.Windows.Forms.Padding(0, 3, 0, 3) };
-			contextMenuStrip.Items.Add(sep1);
-
-			string text = ((App.MainMouseHook != null && App.MainMouseHook.IsPaused) ? I18n.T("TrayResume") : I18n.T("TrayPause"));
-			_pauseResumeMenuItem = new ToolStripMenuItem(text, null, delegate
-			{
-				TogglePauseGestures();
-			})
-			{
-				Padding = new System.Windows.Forms.Padding(12, 5, 12, 5)
-			};
-			contextMenuStrip.Items.Add(_pauseResumeMenuItem);
-
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayPreferences"), () => ShowSettings()));
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayAppearance"), () => ShowSettings(1)));
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayGestures"), () => ShowSettings(2)));
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayAbout"), () => ShowSettings(4)));
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayElevate"), () => ElevatePrivileges_Click(null, new RoutedEventArgs())));
-
-			var sep2 = new ToolStripSeparator { Margin = new System.Windows.Forms.Padding(0, 3, 0, 3) };
-			contextMenuStrip.Items.Add(sep2);
-
-			contextMenuStrip.Items.Add(CreateTrayMenuItem(I18n.T("TrayExit"), () => ExitApplication()));
-
-			_notifyIcon.ContextMenuStrip = contextMenuStrip;
-			ApplyTrayMenuTheme(IsCurrentThemeDark());
-		}
-	}
-
-	private ToolStripMenuItem CreateTrayMenuItem(string text, Action onClick)
-	{
-		return new ToolStripMenuItem(text, null, (s, e) => onClick?.Invoke())
-		{
-			Padding = new System.Windows.Forms.Padding(12, 5, 12, 5)
-		};
-	}
-
-	public void ApplyTrayMenuTheme(bool isDark)
-	{
-		if (_notifyIcon?.ContextMenuStrip == null) return;
-
-		var cms = _notifyIcon.ContextMenuStrip;
-		cms.Renderer = new ModernTrayRenderer(isDark);
-		cms.BackColor = isDark ? System.Drawing.Color.FromArgb(24, 24, 27) : System.Drawing.Color.FromArgb(255, 255, 255);
-
-		System.Drawing.Color enabledColor = isDark ? System.Drawing.Color.FromArgb(244, 244, 245) : System.Drawing.Color.FromArgb(15, 23, 42);
-		System.Drawing.Color disabledColor = isDark ? System.Drawing.Color.FromArgb(148, 163, 184) : System.Drawing.Color.FromArgb(100, 116, 139);
-
-		foreach (ToolStripItem item in cms.Items)
-		{
-			if (item is ToolStripMenuItem menuItem)
-			{
-				menuItem.ForeColor = menuItem.Enabled ? enabledColor : disabledColor;
-			}
-		}
-
-		cms.Invalidate();
-	}
 
 	public bool IsCurrentThemeDark()
 	{
@@ -2281,32 +2031,7 @@ public partial class SettingsWindow : Window
 		{
 			AdvancedPageSubheader.Text = I18n.T("AdvancedPageSubheader");
 		}
-		BuildTrayContextMenu();
-	}
-
-	private void TogglePauseGestures()
-	{
-		if (App.MainMouseHook == null)
-		{
-			return;
-		}
-		App.MainMouseHook.IsPaused = !App.MainMouseHook.IsPaused;
-		if (App.MainMouseHook.IsPaused)
-		{
-			if (_pauseResumeMenuItem != null)
-			{
-				_pauseResumeMenuItem.Text = I18n.T("TrayResume");
-			}
-			_notifyIcon.Text = "StarPie (" + I18n.T("TrayPause") + ")";
-		}
-		else
-		{
-			if (_pauseResumeMenuItem != null)
-			{
-				_pauseResumeMenuItem.Text = I18n.T("TrayPause");
-			}
-			_notifyIcon.Text = I18n.T("TrayTooltip");
-		}
+		App.RefreshTrayMenu();
 	}
 
 	public void ShowSettings(int tabIndex = -1)
@@ -2319,11 +2044,9 @@ public partial class SettingsWindow : Window
 			});
 			return;
 		}
+		CancelDeferredClose();
 		EnsureUiInitialized();
-		if (tabIndex >= 0)
-		{
-			SwitchToTab(tabIndex);
-		}
+		SwitchToTab(tabIndex >= 0 ? tabIndex : _lastSelectedTabIndex);
 		BeginAnimation(UIElement.OpacityProperty, null);
 		base.Opacity = 1.0;
 		if (base.Visibility != Visibility.Visible)
@@ -2363,6 +2086,8 @@ public partial class SettingsWindow : Window
 		{
 			return;
 		}
+		index = Math.Clamp(index, 0, 4);
+		_lastSelectedTabIndex = index;
 		TriggerSettingsGrid.Visibility = ((index != 0) ? Visibility.Collapsed : Visibility.Visible);
 		AppearanceSettingsGrid.Visibility = ((index != 1) ? Visibility.Collapsed : Visibility.Visible);
 		MappingsSettingsGrid.Visibility = ((index != 2) ? Visibility.Collapsed : Visibility.Visible);
@@ -2677,9 +2402,19 @@ public partial class SettingsWindow : Window
 		}
 	}
 
-	private void ExitApplication()
+	private void Window_Closing(object sender, CancelEventArgs e)
 	{
-		_isClosingFromTray = true;
+		if (!_isClosingForRelease && !App.IsExiting)
+		{
+			e.Cancel = true;
+			SyncUiToConfigAndSave();
+			Hide();
+			Opacity = 1.0;
+			ScheduleDeferredClose();
+			App.ShowTrayBalloon(2000, "StarPie", "设置窗口已隐藏，应用将在后台继续运行鼠标手势监视。", ToolTipIcon.Info);
+			return;
+		}
+
 		try
 		{
 			if (_isUiInitialized)
@@ -2690,33 +2425,52 @@ public partial class SettingsWindow : Window
 		catch
 		{
 		}
-		_notifyIcon.Visible = false;
-		_notifyIcon.Dispose();
-		System.Windows.Application.Current.Shutdown();
+
+		ReleaseWindowResources();
 	}
 
-	private void Window_Closing(object sender, CancelEventArgs e)
+	private void ScheduleDeferredClose()
 	{
-		if (_isUiInitialized)
+		_deferredCloseTimer?.Stop();
+		_deferredCloseTimer = new DispatcherTimer
 		{
-			SyncUiToConfigAndSave();
-		}
-		if (_isClosingFromTray)
+			Interval = TimeSpan.FromSeconds(30)
+		};
+		_deferredCloseTimer.Tick += DeferredCloseTimer_Tick;
+		_deferredCloseTimer.Start();
+	}
+
+	private void DeferredCloseTimer_Tick(object? sender, EventArgs e)
+	{
+		_deferredCloseTimer?.Stop();
+		_deferredCloseTimer = null;
+		_isClosingForRelease = true;
+		Close();
+	}
+
+	private void ReleaseWindowResources()
+	{
+		_deferredCloseTimer?.Stop();
+		_deferredCloseTimer = null;
+		_isClosingForRelease = true;
+		_lifetimeCts.Cancel();
+		_lifetimeCts.Dispose();
+
+		_autoSaveDebounceTimer?.Stop();
+		_autoSaveDebounceTimer = null;
+
+		_downloadCts?.Cancel();
+		_downloadCts?.Dispose();
+		_downloadCts = null;
+
+		if (_isUiInitialized && App.MainKeyboardHook != null)
 		{
-			DisposeSlotViewModels();
+			App.MainKeyboardHook.OnExclusiveRecordCompleted -= MainKeyboardHook_OnExclusiveRecordCompleted;
+			App.MainKeyboardHook.OnExclusiveRecordCancelled -= MainKeyboardHook_OnExclusiveRecordCancelled;
+			App.MainKeyboardHook.OnExclusiveRecordModifiersChanged -= MainKeyboardHook_OnExclusiveRecordModifiersChanged;
 		}
-		if (!_isClosingFromTray)
-		{
-			e.Cancel = true;
-			DoubleAnimation doubleAnimation = new DoubleAnimation(1.0, 0.0, new Duration(TimeSpan.FromMilliseconds(120.0)));
-			doubleAnimation.Completed += delegate
-			{
-				Hide();
-				base.Opacity = 1.0;
-			};
-			BeginAnimation(UIElement.OpacityProperty, doubleAnimation);
-			_notifyIcon.ShowBalloonTip(2000, "WinPieGestures", "应用已最小化至系统托盘，将在后台继续运行鼠标笔势监视。", ToolTipIcon.Info);
-		}
+		CancelExclusiveRecordingIfActive();
+		DisposeSlotViewModels();
 	}
 
 	private void ProfilesListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -4807,7 +4561,7 @@ public partial class SettingsWindow : Window
 		AppLogger.LogInfo("Activated exclusive hotkey recording mode (suppressing desktop and app hotkeys)");
 		try
 		{
-			_notifyIcon?.ShowBalloonTip(2000, "StarPie", "⏸️ 已暂时暂停桌面系统及其他软件全局快捷键，在此按下目标按键组合进行录入（按 Esc 取消）", System.Windows.Forms.ToolTipIcon.Info);
+			App.ShowTrayBalloon(2000, "StarPie", "⏸️ 已暂时暂停桌面系统及其他软件全局快捷键，在此按下目标按键组合进行录入（按 Esc 取消）", System.Windows.Forms.ToolTipIcon.Info);
 		}
 		catch { }
 	}
@@ -4823,7 +4577,7 @@ public partial class SettingsWindow : Window
 			CancelExclusiveRecordingIfActive();
 			try
 			{
-				_notifyIcon?.ShowBalloonTip(1000, "StarPie", "▶️ 已恢复全局热键与按键正常监听", System.Windows.Forms.ToolTipIcon.Info);
+				App.ShowTrayBalloon(1000, "StarPie", "▶️ 已恢复全局热键与按键正常监听", System.Windows.Forms.ToolTipIcon.Info);
 			}
 			catch { }
 		}
@@ -4885,7 +4639,7 @@ public partial class SettingsWindow : Window
 			AppLogger.LogInfo($"Exclusive hotkey recorded successfully: {hotkeyStr}");
 			try
 			{
-				_notifyIcon?.ShowBalloonTip(1500, "StarPie", $"✅ 已录制快捷键: {hotkeyStr}（已恢复全局热键）", System.Windows.Forms.ToolTipIcon.Info);
+				App.ShowTrayBalloon(1500, "StarPie", $"✅ 已录制快捷键: {hotkeyStr}（已恢复全局热键）", System.Windows.Forms.ToolTipIcon.Info);
 			}
 			catch { }
 		});
@@ -4898,7 +4652,7 @@ public partial class SettingsWindow : Window
 			CancelExclusiveRecordingIfActive();
 			try
 			{
-				_notifyIcon?.ShowBalloonTip(1000, "StarPie", "已取消快捷键录制，已恢复全局热键", System.Windows.Forms.ToolTipIcon.Info);
+				App.ShowTrayBalloon(1000, "StarPie", "已取消快捷键录制，已恢复全局热键", System.Windows.Forms.ToolTipIcon.Info);
 			}
 			catch { }
 		});
@@ -10479,7 +10233,7 @@ public partial class SettingsWindow : Window
 			UpdateSidebarThemeVisualState(themeTag);
 			bool isDark = IsCurrentThemeDark();
 			UpdateLogoTheme(isDark);
-			ApplyTrayMenuTheme(isDark);
+			App.ApplyTrayTheme(isDark);
 			if (AppearanceSettingsGrid != null && AppearanceSettingsGrid.Visibility == Visibility.Visible)
 			{
 				RenderLiveWheelPreview();
@@ -11241,21 +10995,7 @@ public partial class SettingsWindow : Window
 
 	private void ElevatePrivileges_Click(object sender, RoutedEventArgs e)
 	{
-		try
-		{
-			string fileName = Environment.ProcessPath ?? System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WinPieGestures.exe");
-			Process.Start(new ProcessStartInfo
-			{
-				FileName = fileName,
-				UseShellExecute = true,
-				Verb = "runas"
-			});
-			ExitApplication();
-		}
-		catch (Exception ex)
-		{
-			System.Windows.MessageBox.Show("提权重启失败或已取消: " + ex.Message, "管理员提权", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-		}
+		App.RestartElevated();
 	}
 
 	private void ExportConfigButton_Click(object sender, RoutedEventArgs e)
