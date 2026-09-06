@@ -11,7 +11,7 @@
 3. [⚙️ 核心技术机制与避坑规范](#3-核心技术机制与避坑规范)
 4. [🔄 代码生成、编译与发布流水线](#4-代码生成编译与发布流水线)
 5. [🎨 UI/UX 与视觉设计规范](#5-uiux-与视觉设计规范)
-6. [📜 版本里程碑演进图谱 (v1.0.0 ~ v1.5.5)](#6-版本里程碑演进图谱)
+6. [📜 版本里程碑演进图谱 (v1.0.0 ~ v1.7.0)](#6-版本里程碑演进图谱-v100--v170)
 7. [🤝 Agent 接力协作与交付验收闭环](#7-agent-接力协作与交付验收闭环)
 
 ---
@@ -45,9 +45,10 @@
 g:\Users\2 Better\Desktop\design\
 ├── WinPieGestures/                # 主工程源码目录 (.NET 8.0 WPF)
 │   ├── WinPieGestures.csproj      # 项目配置文件 (版本号、依赖与打包参数)
-│   ├── App.xaml / App.xaml.cs     # 应用启动入口、单例互斥锁、托盘图标生命周期
+│   ├── App.xaml / App.xaml.cs     # 应用宿主、单例互斥锁、Hook/托盘/设置窗口生命周期
+│   ├── TrayController.cs          # 进程级系统托盘控制器（菜单、主题、UIPI 防护、提示与退出）
 │   ├── RadialWindow.xaml(.cs)     # 核心悬浮轮盘窗口 (硬件加速透明渲染、高频动画)
-│   ├── SettingsWindow.xaml(.cs)   # 控制台主界面 (四卡片现代化配置面板、实时交互画布)
+│   ├── SettingsWindow.xaml(.cs)   # 按需创建的控制台主界面（配置面板、实时交互画布）
 │   ├── SubActionEditorWindow.xaml(.cs) # 二级级联子动作独立编辑器
 │   ├── HotkeyBuilderDialog.xaml(.cs)   # 快捷键拼装组合器 (自包含样式、一键预设芯片)
 │   ├── ColorPickerWindow.xaml(.cs)     # 颜色选择器 (色盘选择、色相环与屏幕实时吸色)
@@ -140,6 +141,24 @@ g:\Users\2 Better\Desktop\design\
   ```
   杜绝由于 `_isUpdatingUi` 状态锁导致界面控件脱节的问题。
 
+### 3.6 应用宿主、托盘与设置窗口生命周期
+- **进程级所有权**：`App` 是程序宿主，负责持有 `MouseHook`、`KeyboardHook`、`GestureController`、`TrayController`，并通过 `ShowSettingsWindow(int tabIndex = -1)` 统一管理 `SettingsWindow` 的创建与显示。
+- **托盘必须独立于设置窗口**：
+  - `NotifyIcon`、托盘菜单、暂停/恢复、主题、本地化、提权、退出和提示气泡统一由 `TrayController` 管理；
+  - 管理员权限运行时的 `ChangeWindowMessageFilter` / `ChangeWindowMessageFilterEx` UIPI 消息放行必须保留在 `TrayController`；
+  - 严禁重新把托盘生命周期放回 `SettingsWindow`，否则静默启动会再次加载完整控制台 UI。
+- **设置窗口按需创建**：
+  - 静默启动、开机自启时严禁直接 `new SettingsWindow()`；
+  - 普通启动、托盘菜单、第二实例唤醒，以及轮盘动作「打开 StarPie 控制台」都必须调用 `App.ShowSettingsWindow()`；
+  - 严禁使用 `App.MainSettingsWindow?.ShowSettings()` 作为入口，因为窗口释放后该调用会静默失效。
+- **30 秒延迟释放策略**：
+  - 用户关闭控制台时先 `Hide()` 并启动 30 秒一次性计时器；
+  - 30 秒内重新打开时取消计时器并复用原窗口；
+  - 空闲超过 30 秒后才真正 `Close()`，解除外部事件、停止计时器、取消下载/更新任务并释放 ViewModel；
+  - 最终释放后只允许调用 `MemoryOptimizer.TrimMemory(force: false)`，不得在日常关闭路径执行 Full GC 与强制工作集剥离，避免下一次轮盘唤起发生硬缺页或卡顿。
+- **初始化不得产生系统副作用**：WPF 给 `CheckBox.IsChecked` 赋值时也可能触发 `Checked/Unchecked`。加载自启动状态时必须同时使用 `_isUpdatingUi`、`_isUiInitializing` 与 `_isLoadingAutoStartState` 防护，并比较已加载状态；只有用户实际修改开关时才能调用 `ConfigManager.SetAutoStart()`，严禁打开控制台时创建或删除计划任务。
+- **显式退出模式**：`App.xaml` 必须保持 `ShutdownMode="OnExplicitShutdown"`，关闭最后一个设置窗口不能结束后台 Hook 与托盘进程；只有托盘退出、提权重启或明确的应用退出流程可以调用 `Shutdown()`。
+
 ---
 
 ## 4. 🔄 代码生成、编译与发布流水线
@@ -163,12 +182,13 @@ dotnet publish "g:\Users\2 Better\Desktop\design\WinPieGestures" -c Release -r w
 powershell -Command "Compress-Archive -Path 'g:\Users\2 Better\Desktop\design\releases\vX.Y.Z\Lightweight\*' -DestinationPath 'g:\Users\2 Better\Desktop\design\releases\vX.Y.Z\StarPie-vX.Y.Z-Lightweight-win-x64.zip' -Force; Compress-Archive -Path 'g:\Users\2 Better\Desktop\design\releases\vX.Y.Z\Standalone\*' -DestinationPath 'g:\Users\2 Better\Desktop\design\releases\vX.Y.Z\StarPie-vX.Y.Z-Standalone-win-x64.zip' -Force"
 ```
 
-### 4.3 版本号同步四要素检查清单 (Version Sync Checklist)
-每次发布新版本 `vX.Y.Z` 时，必须同步更新以下 4 处位置：
+### 4.3 版本号同步五要素检查清单 (Version Sync Checklist)
+每次发布新版本 `vX.Y.Z` 时，必须同步更新以下 5 处位置：
 1. `WinPieGestures.csproj`：`<Version>X.Y.Z</Version>`, `<AssemblyVersion>X.Y.Z.0</AssemblyVersion>`, `<FileVersion>X.Y.Z.0</FileVersion>`
-2. `SettingsWindow.xaml`：左侧边栏底部版本文字 `SidebarVersionText` 与关于卡片里程碑
-3. `SettingsWindow.xaml.cs`：托盘右键菜单标题文本 `StarPie vX.Y.Z`
-4. `CHANGELOG.md`：在顶部添加规范的 `## [vX.Y.Z] - YYYY-MM-DD` 详细变更日志
+2. `App.xaml.cs`：启动日志中的 `StarPie vX.Y.Z` 回退文本
+3. `SettingsWindow.xaml(.cs)`：左侧边栏、关于卡片、更新页与 User-Agent 中的版本回退文本和里程碑
+4. `TrayController.cs`：托盘右键菜单标题的 `StarPie vX.Y.Z` 回退文本
+5. `CHANGELOG.md`：在顶部添加规范的 `## [vX.Y.Z] - YYYY-MM-DD` 详细变更日志
 
 ---
 
@@ -216,7 +236,7 @@ powershell -Command "Compress-Archive -Path 'g:\Users\2 Better\Desktop\design\re
 | **v1.6.7** | 2026-09-03 | 综合优化迭代：原生 OCR 流生命周期与语言包环境诊断修复、ScreenHelper 统管 PerMonitorV2 与渲染帧二次物理校准解决多屏唤起漂仪、多级轮盘卡片迁入 Tab 3、新增核心圆唤醒死区灵敏度滑块、二级轮盘外观预览单扇区聚焦消除遮挡 |
 | **v1.6.8** | 2026-09-04 | 视觉品牌、交互大成、热键可靠性与开机秒启：全新星盘宇宙公转轨道与四芒星核超清图标 (cover.v3)、Windows 开机自启速度深度重构 (计划任务零延迟/异步延迟自愈/控制台懒加载/开机冷启暴降至30~60ms/静默内存压至<1MB)、热键粘滞与按键失灵根治 (VK_SNAPSHOT扫描码修复/双通道成对释放/三阶异步守护/低级钩子自愈盾)、动作配置画布经典形态固化统一消除异形干扰、GitHub加速源新增 (github.akams.cn)、方案管理工具栏与折叠下拉栏同步重构、蜂窝扇二级轮盘方位颠倒修复、控制台一二级配置模式双向联动与实时预览保持、轮盘扇区自适应弹性字号 (Auto Font-Fit)、语言选单微标规范化、视口呼吸留白与高对比度滑块、全量多语言覆盖、画布缩放修复、快捷键Pause与搜索、独占暂停全局热键、侧边栏主题切换、贡献者致谢离线策略、平铺设置折叠、深色对比度优化、扇区文字位置与微调、屏幕边缘防溢出 |
 | **v1.6.9** | 2026-09-06 | 简单/高级双模体系与持久化守卫 & 扇区重置根治与容量匹配 & 配置布局切换锁死修复：简单模式与高级全量模式双模极速切换与按图保留定制、彻底根除重启后扇区动作重置为平铺左右对半缺陷与全自动数据自愈、程序图标继承渲染优先级提升与平铺子模式覆写保护、开机秒启懒加载与退出配置无损持久化守卫彻底根除防误触被关闭、六大画布与轮盘渲染通路图标继承逻辑全面对齐、动作聚焦编辑卡片增加关联图标徽标与预览、二级菜单蜂窝扇(最多3项)与外圈子环(最多4项)说明描述与添加/渲染动态容量全闭环匹配、根除 _uiUpdateDepth 引用计数锁死缺陷彻底解决配置布局与模式切换失灵 |
-| **v1.7.0** | 2026-09-06 | 简单模式层级精简提纯 & 侧边栏微标重塑 & 中心核圆动作图标呼出修复 & 高级模式多层无限轮盘：鼠标手势卡片、顺势外甩执行动作高级区、屏幕边缘防溢出卡片与紧凑全览列表分段切换器全面纳入高级模式；简单模式锁定极简画布精调；重构侧边栏模式微标折叠态居中胶囊与点击一键切模；呼出轮盘后滚轮/Tab键无级循环切换多层无限轮盘，每层独立扇区数/动作/核圆配置；彻底修复真机呼出轮盘 (RadialWindow) 中心核圆配置动作图标不显示的缺陷，打通 SVG、外部程序图标与自定义图标包全链路渲染通路并支持琥珀光晕高亮。 |
+| **v1.7.0** | 2026-09-06 | 简单模式层级精简提纯 & 侧边栏微标重塑 & 中心核圆动作图标呼出修复 & 高级模式多层无限轮盘 & 控制台生命周期解耦：鼠标手势卡片、顺势外甩执行动作高级区、屏幕边缘防溢出卡片与紧凑全览列表分段切换器全面纳入高级模式；简单模式锁定极简画布精调；重构侧边栏模式微标折叠态居中胶囊与点击一键切模；呼出轮盘后滚轮/Tab键无级循环切换多层无限轮盘，每层独立扇区数/动作/核圆配置；彻底修复真机呼出轮盘 (RadialWindow) 中心核圆配置动作图标不显示的缺陷，打通 SVG、外部程序图标与自定义图标包全链路渲染通路并支持琥珀光晕高亮；新增独立 `TrayController`，静默启动不再创建 `SettingsWindow`，控制台关闭后采用 30 秒复用窗口与轻量延迟释放策略，并修复初始化误触发计划任务和窗口释放后轮盘控制台动作失效问题。 |
 
 ---
 
