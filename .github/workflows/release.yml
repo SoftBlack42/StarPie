@@ -37,20 +37,22 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
-          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
-            throw "Release tag must use the vX.Y.Z format: $tag"
+          if ($tag -notmatch '^v(?<baseVersion>\d+\.\d+\.\d+)(?<prerelease>-beta\d+)?$') {
+            throw "Release tag must use vX.Y.Z or vX.Y.Z-betaN format: $tag"
           }
 
-          $tagVersion = $Matches.version
-          $expectedFourPartVersion = "${tagVersion}.0"
+          $baseVersion = $Matches.baseVersion
+          $prereleaseSuffix = $Matches.prerelease
+          $expectedProjectVersion = "${baseVersion}${prereleaseSuffix}"
+          $expectedFourPartVersion = "${baseVersion}.0"
           [xml]$project = Get-Content "WinPieGestures/WinPieGestures.csproj"
 
           $projectVersion = [string]$project.Project.PropertyGroup.Version
           $assemblyVersion = [string]$project.Project.PropertyGroup.AssemblyVersion
           $fileVersion = [string]$project.Project.PropertyGroup.FileVersion
 
-          if ($projectVersion -ne $tagVersion) {
-            throw "Version mismatch: tag=$tagVersion Version=$projectVersion"
+          if ($projectVersion -ne $expectedProjectVersion) {
+            throw "Version mismatch: tag=$expectedProjectVersion Version=$projectVersion"
           }
           if ($assemblyVersion -ne $expectedFourPartVersion) {
             throw "AssemblyVersion mismatch: expected=$expectedFourPartVersion actual=$assemblyVersion"
@@ -126,4 +128,16 @@ jobs:
             Sort-Object Name |
             Select-Object -ExpandProperty FullName
 
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes --title "StarPie $env:GITHUB_REF_NAME"
+          $releaseArguments = @("release", "create", $env:GITHUB_REF_NAME)
+          $releaseArguments += $assets
+          $releaseArguments += @("--verify-tag", "--generate-notes", "--title", "StarPie $env:GITHUB_REF_NAME")
+
+          if ($env:GITHUB_REF_NAME -match '^v\d+\.\d+\.\d+-beta\d+$') {
+            $releaseArguments += "--prerelease"
+            Write-Host "Publishing GitHub pre-release: $env:GITHUB_REF_NAME"
+          }
+
+          & gh @releaseArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release creation failed with exit code $LASTEXITCODE"
+          }
