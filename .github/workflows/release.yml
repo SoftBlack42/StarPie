@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
+      - 'V*.*.*'
 
 permissions:
   contents: write
@@ -37,8 +38,8 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
-          if ($tag -notmatch '^v(?<baseVersion>\d+\.\d+\.\d+)(?<prerelease>-beta\.\d+)?$') {
-            throw "Release tag must use vX.Y.Z or vX.Y.Z-beta.N format: $tag"
+          if ($tag -inotmatch '^v(?<baseVersion>\d+\.\d+\.\d+)(?<prerelease>-beta\.\d+)?$') {
+            throw "Release tag must use vX.Y.Z/VX.Y.Z or vX.Y.Z-beta.N/VX.Y.Z-beta.N format: $tag"
           }
 
           $baseVersion = $Matches.baseVersion
@@ -131,7 +132,7 @@ jobs:
           $allTags = @(git tag --list)
           $startTag = $null
 
-          if ($tag -match '^v(?<version>\d+\.\d+\.\d+)-beta\.(?<number>\d+)$') {
+          if ($tag -imatch '^v(?<version>\d+\.\d+\.\d+)-beta\.(?<number>\d+)$') {
             $baseVersionText = $Matches.version
             $baseVersion = [version]$baseVersionText
             $betaNumber = [long]$Matches.number
@@ -176,7 +177,7 @@ jobs:
               }
             }
           }
-          elseif ($tag -match '^v(?<version>\d+\.\d+\.\d+)$') {
+          elseif ($tag -imatch '^v(?<version>\d+\.\d+\.\d+)$') {
             $currentVersion = [version]$Matches.version
             $previousStable = @(
               foreach ($candidate in $allTags) {
@@ -226,7 +227,7 @@ jobs:
             $releaseArguments += @("--notes-start-tag", $env:RELEASE_NOTES_START_TAG)
           }
 
-          if ($env:GITHUB_REF_NAME -match '^v\d+\.\d+\.\d+-beta\.\d+$') {
+          if ($env:GITHUB_REF_NAME -imatch '^v\d+\.\d+\.\d+-beta\.\d+$') {
             $releaseArguments += "--prerelease"
             Write-Host "Publishing GitHub pre-release: $env:GITHUB_REF_NAME"
           }
@@ -243,7 +244,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^v(?<baseVersion>\d+\.\d+\.\d+)-beta\.\d+$') {
+          if ($env:GITHUB_REF_NAME -inotmatch '^v(?<baseVersion>\d+\.\d+\.\d+)-beta\.\d+$') {
             throw "Unexpected beta tag format: $env:GITHUB_REF_NAME"
           }
 
@@ -262,7 +263,7 @@ jobs:
               continue
             }
 
-            $betaMatch = [regex]::Match($release.tagName, $betaPattern)
+            $betaMatch = [regex]::Match($release.tagName, $betaPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             if ($betaMatch.Success) {
               $betaReleases.Add([pscustomobject]@{
                 TagName = $release.tagName
