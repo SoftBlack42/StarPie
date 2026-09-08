@@ -124,6 +124,91 @@ jobs:
             throw "Standalone package does not contain StarPie.exe"
           }
 
+      - name: Determine release-notes range
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $allTags = @(git tag --list)
+          $startTag = $null
+
+          if ($tag -match '^v(?<version>\d+\.\d+\.\d+)-beta\.(?<number>\d+)$') {
+            $baseVersionText = $Matches.version
+            $baseVersion = [version]$baseVersionText
+            $betaNumber = [long]$Matches.number
+            $betaPattern = "^v$([regex]::Escape($baseVersionText))-beta\.(?<number>\d+)$"
+
+            $previousBeta = @(
+              foreach ($candidate in $allTags) {
+                $match = [regex]::Match($candidate, $betaPattern)
+                if ($match.Success) {
+                  $candidateNumber = [long]$match.Groups['number'].Value
+                  if ($candidateNumber -lt $betaNumber) {
+                    [pscustomobject]@{
+                      Tag = $candidate
+                      Number = $candidateNumber
+                    }
+                  }
+                }
+              }
+            ) | Sort-Object Number -Descending | Select-Object -First 1
+
+            if ($null -ne $previousBeta) {
+              $startTag = $previousBeta.Tag
+            }
+            else {
+              $previousStable = @(
+                foreach ($candidate in $allTags) {
+                  $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$')
+                  if ($match.Success) {
+                    $candidateVersion = [version]$match.Groups['version'].Value
+                    if ($candidateVersion -lt $baseVersion) {
+                      [pscustomobject]@{
+                        Tag = $candidate
+                        Version = $candidateVersion
+                      }
+                    }
+                  }
+                }
+              ) | Sort-Object Version -Descending | Select-Object -First 1
+
+              if ($null -ne $previousStable) {
+                $startTag = $previousStable.Tag
+              }
+            }
+          }
+          elseif ($tag -match '^v(?<version>\d+\.\d+\.\d+)$') {
+            $currentVersion = [version]$Matches.version
+            $previousStable = @(
+              foreach ($candidate in $allTags) {
+                $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$')
+                if ($match.Success) {
+                  $candidateVersion = [version]$match.Groups['version'].Value
+                  if ($candidateVersion -lt $currentVersion) {
+                    [pscustomobject]@{
+                      Tag = $candidate
+                      Version = $candidateVersion
+                    }
+                  }
+                }
+              }
+            ) | Sort-Object Version -Descending | Select-Object -First 1
+
+            if ($null -ne $previousStable) {
+              $startTag = $previousStable.Tag
+            }
+          }
+          else {
+            throw "Unsupported release tag format: $tag"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($startTag)) {
+            Write-Warning "No suitable previous tag was found; GitHub will choose the release-notes starting point automatically."
+          }
+          else {
+            "RELEASE_NOTES_START_TAG=$startTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Release notes will collect changes from $startTag to $tag"
+          }
+
       - name: Create GitHub Release
         shell: pwsh
         env:
@@ -136,6 +221,10 @@ jobs:
           $releaseArguments = @("release", "create", $env:GITHUB_REF_NAME)
           $releaseArguments += $assets
           $releaseArguments += @("--verify-tag", "--generate-notes", "--title", "StarPie $env:GITHUB_REF_NAME")
+
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_NOTES_START_TAG)) {
+            $releaseArguments += @("--notes-start-tag", $env:RELEASE_NOTES_START_TAG)
+          }
 
           if ($env:GITHUB_REF_NAME -match '^v\d+\.\d+\.\d+-beta\.\d+$') {
             $releaseArguments += "--prerelease"
