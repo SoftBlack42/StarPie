@@ -139,7 +139,7 @@ jobs:
 
             $previousBeta = @(
               foreach ($candidate in $allTags) {
-                $match = [regex]::Match($candidate, $betaPattern)
+                $match = [regex]::Match($candidate, $betaPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
                 if ($match.Success) {
                   $candidateNumber = [long]$match.Groups['number'].Value
                   if ($candidateNumber -lt $betaNumber) {
@@ -158,7 +158,7 @@ jobs:
             else {
               $previousStable = @(
                 foreach ($candidate in $allTags) {
-                  $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$')
+                  $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
                   if ($match.Success) {
                     $candidateVersion = [version]$match.Groups['version'].Value
                     if ($candidateVersion -lt $baseVersion) {
@@ -180,7 +180,7 @@ jobs:
             $currentVersion = [version]$Matches.version
             $previousStable = @(
               foreach ($candidate in $allTags) {
-                $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$')
+                $match = [regex]::Match($candidate, '^v(?<version>\d+\.\d+\.\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
                 if ($match.Success) {
                   $candidateVersion = [version]$match.Groups['version'].Value
                   if ($candidateVersion -lt $currentVersion) {
