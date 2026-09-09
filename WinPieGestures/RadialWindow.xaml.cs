@@ -508,6 +508,7 @@ public partial class RadialWindow : Window
 		_borderThickness = 1.0;
 		_highlightBorderThickness = 1.5;
 		InitializeComponent();
+		IsHitTestVisible = false;
 		_centerPoint = centerPoint;
 		_profile = profile;
 		_requestedConfigurationRevision = ConfigManager.ConfigurationRevision;
@@ -547,6 +548,8 @@ public partial class RadialWindow : Window
 		PresentationVersion = presentationVersion;
 		ResetPresentationState();
 		ApplyLayoutFromCurrentConfiguration(centerPoint);
+		// 先将入场动画的初始状态写入视觉树，再显示 HWND，避免先绘制完整圆盘后才切换到动画起始帧造成闪烁。
+		PrepareIntroAnimation();
 
 		if (wasLoaded && needsRebuild)
 		{
@@ -555,6 +558,7 @@ public partial class RadialWindow : Window
 
 		if (!IsVisible)
 		{
+			// HWND 只在首次呈现时创建；后续手势不再 Hide/Show 透明窗口，避免 DWM 复用旧合成帧造成闪烁。
 			Show();
 		}
 		PositionWindowOnTargetMonitor();
@@ -566,10 +570,23 @@ public partial class RadialWindow : Window
 			}
 		}), DispatcherPriority.Render);
 
-		if (wasLoaded)
+		// 内容层在上一帧完成前保持隐藏；下一次 Render 回调再显示并启动动效，
+		// 避免复用透明 HWND 时 DWM 先显示旧的完整视觉树。
+		Dispatcher.BeginInvoke(new Action(() =>
 		{
-			StartIntroAnimation();
-		}
+			if (_isDisposed || !IsVisible || PresentationVersion != presentationVersion)
+			{
+				return;
+			}
+			MainGrid.Visibility = Visibility.Visible;
+			Dispatcher.BeginInvoke(new Action(() =>
+			{
+				if (!_isDisposed && IsVisible && PresentationVersion == presentationVersion)
+				{
+					StartIntroAnimation(presentationVersion);
+				}
+			}), DispatcherPriority.Render);
+		}), DispatcherPriority.Render);
 	}
 
 	/// <summary>隐藏当前手势，但保留 Window/HWND 供下一次呼出复用。旧手势的延迟回调不得隐藏新手势。</summary>
@@ -585,12 +602,16 @@ public partial class RadialWindow : Window
 			return;
 		}
 		StopPresentationAnimations();
+		// 保持透明 HWND 常驻，只隐藏内容层；不再 Hide/Show 窗口，避免 DWM 在重新显示时闪出上一帧。
+		Opacity = 1.0;
+		MainGrid.Visibility = Visibility.Hidden;
+		MainGrid.Opacity = 0.0;
+		WindowScale.ScaleX = 0.65;
+		WindowScale.ScaleY = 0.65;
 		ClearSubTier();
 		CoreVolumeText.Visibility = Visibility.Collapsed;
 		CoreSelectionTextPanel.Visibility = Visibility.Collapsed;
 		CoreSelectionOverlay.Visibility = Visibility.Collapsed;
-		Visibility = Visibility.Collapsed;
-		Hide();
 	}
 
 	private void ApplyLayoutFromCurrentConfiguration(Point requestedCenter)
@@ -931,7 +952,6 @@ public partial class RadialWindow : Window
 				CenterOnPhysically(_centerPoint.X, _centerPoint.Y);
 			}
 		}), DispatcherPriority.Render);
-		StartIntroAnimation();
 	}
 
 	private void RebuildVisualsFromCurrentConfiguration(long configurationRevision)
@@ -1008,10 +1028,24 @@ public partial class RadialWindow : Window
 		_hasRenderedContent = true;
 	}
 
-	private void StartIntroAnimation()
+	private void PrepareIntroAnimation()
 	{
 		StopPresentationAnimations();
-		MainGrid.Opacity = 1.0;
+		// 透明 HWND 保持最终不透明度，内容层从透明/缩小状态开始入场，避免窗口级合成帧切换。
+		Opacity = 1.0;
+		MainGrid.Visibility = Visibility.Hidden;
+		MainGrid.Opacity = 0.0;
+		WindowScale.ScaleX = 0.65;
+		WindowScale.ScaleY = 0.65;
+	}
+
+	private void StartIntroAnimation(long presentationVersion)
+	{
+		if (_isDisposed || !IsVisible || PresentationVersion != presentationVersion)
+		{
+			return;
+		}
+
 		BackEase easingFunction = new BackEase
 		{
 			EasingMode = EasingMode.EaseOut,
@@ -1025,10 +1059,10 @@ public partial class RadialWindow : Window
 		{
 			EasingFunction = easingFunction
 		};
-		DoubleAnimation opacity = new DoubleAnimation(0.0, 1.0, new Duration(TimeSpan.FromMilliseconds(90.0)));
+		DoubleAnimation contentOpacity = new DoubleAnimation(0.0, 1.0, new Duration(TimeSpan.FromMilliseconds(90.0)));
 		WindowScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleX);
 		WindowScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleY);
-		MainGrid.BeginAnimation(UIElement.OpacityProperty, opacity);
+		MainGrid.BeginAnimation(UIElement.OpacityProperty, contentOpacity);
 	}
 
 	internal void UpdateCenterIconVisuals()
@@ -2027,7 +2061,7 @@ public partial class RadialWindow : Window
 					EasingMode = EasingMode.EaseOut
 				}
 			};
-			BeginAnimation(UIElement.OpacityProperty, animation);
+			MainGrid.BeginAnimation(UIElement.OpacityProperty, animation);
 		}
 	}
 
