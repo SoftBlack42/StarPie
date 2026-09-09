@@ -43,31 +43,34 @@ jobs:
           }
 
           $baseVersion = $Matches.baseVersion
-          $prereleaseSuffix = $Matches.prerelease
-          $expectedFourPartVersion = "${baseVersion}.0"
           [xml]$project = Get-Content "WinPieGestures/WinPieGestures.csproj"
 
           $projectVersion = [string]$project.Project.PropertyGroup.Version
-          $projectBaseVersion = ($projectVersion -split '-', 2)[0]
           $assemblyVersion = [string]$project.Project.PropertyGroup.AssemblyVersion
           $fileVersion = [string]$project.Project.PropertyGroup.FileVersion
 
-          if ([string]::IsNullOrEmpty($prereleaseSuffix)) {
-            if ($projectVersion -ne $baseVersion) {
-              throw "Version mismatch: stable tag=$baseVersion Version=$projectVersion"
+          function Get-ThreePartVersion([string]$value, [string]$fieldName) {
+            if ($value -notmatch '^(?<baseVersion>\d+\.\d+\.\d+)(?:[.+-].*)?$') {
+              throw "$fieldName must start with a three-part numeric version: $value"
             }
-          }
-          elseif ($projectBaseVersion -ne $baseVersion) {
-            throw "Version mismatch: beta tag base=$baseVersion Version=$projectVersion"
-          }
-          if ($assemblyVersion -ne $expectedFourPartVersion) {
-            throw "AssemblyVersion mismatch: expected=$expectedFourPartVersion actual=$assemblyVersion"
-          }
-          if ($fileVersion -ne $expectedFourPartVersion) {
-            throw "FileVersion mismatch: expected=$expectedFourPartVersion actual=$fileVersion"
+
+            return $Matches.baseVersion
           }
 
-          Write-Host "Verified Version=$projectVersion AssemblyVersion=$assemblyVersion FileVersion=$fileVersion"
+          $versionFields = @(
+            @{ Name = "Version"; Value = $projectVersion }
+            @{ Name = "AssemblyVersion"; Value = $assemblyVersion }
+            @{ Name = "FileVersion"; Value = $fileVersion }
+          )
+
+          foreach ($field in $versionFields) {
+            $fieldBaseVersion = Get-ThreePartVersion $field.Value $field.Name
+            if ($fieldBaseVersion -ne $baseVersion) {
+              throw "$($field.Name) mismatch: tag base=$baseVersion actual=$($field.Value)"
+            }
+          }
+
+          Write-Host "Verified matching three-part version ${baseVersion}: Version=$projectVersion AssemblyVersion=$assemblyVersion FileVersion=$fileVersion"
 
       - name: Setup .NET SDK 8.0
         uses: actions/setup-dotnet@v4

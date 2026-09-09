@@ -32,7 +32,7 @@ jobs:
 
           $releases = @($releaseJson | ConvertFrom-Json)
           $cutoff = [DateTimeOffset]::UtcNow.AddDays(-7)
-          $stablePattern = '^v(?<baseVersion>\d+\.\d+\.\d+)$'
+          $stablePattern = '^[vV](?<baseVersion>\d+\.\d+\.\d+)$'
           $eligibleStableCount = 0
           $deletedCount = 0
           $failures = [System.Collections.Generic.List[string]]::new()
@@ -62,7 +62,7 @@ jobs:
 
             $eligibleStableCount++
             $baseVersion = $stableMatch.Groups['baseVersion'].Value
-            $betaPattern = "^v$([regex]::Escape($baseVersion))-beta\.(?<number>\d+)$"
+            $betaPattern = "^[vV]$([regex]::Escape($baseVersion))-beta\.(?<number>\d+)$"
             $betaReleases = [System.Collections.Generic.List[object]]::new()
 
             foreach ($release in $releases) {
