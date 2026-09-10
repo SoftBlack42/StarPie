@@ -4,7 +4,7 @@
 
 版本命名遵循 [语义化版本规范 (Semantic Versioning)](https://semver.org/lang/zh-CN/)：`主版本号.次版本号.修订号`。
 
-## [v1.7.3-beta.5] - 2026-09-10
+## [v1.7.3-beta.5] - 2026-09-11
 
 ### 🌟 唤出一二级轮盘全展开 & 开箱高颜值默认配置友好优化 (Auto-Expand Sub-Rings & Out-of-Box Aesthetic Defaults)
 
@@ -48,6 +48,10 @@
 7. **修复外部窗口操作后轮盘被压入后台缺陷 (Fix Radial Window Pushed Behind External Windows, #99)**：
    - **析因**：透明轮盘采用常驻复用 HWND 机制后，在轮盘内容隐藏期间若外部程序创建新窗口或重排 Z-Order 层级，常驻的悬浮窗可能丢失顶层顺序，导致后续呼出时轮盘被浏览器、Steam 等常规窗口遮挡；
    - **解决方案**：在每次揭示并播放轮盘入场动画前，调用 Win32 `SetWindowPos` 重新锁定 `HWND_TOPMOST` 最顶层顺序，并附加 `SWP_NOACTIVATE` 标志，在完全不抢占当前前台应用输入焦点的前提下，确保轮盘 100% 呈现在最上层。
+
+8. **预发布版本标识统一显示 (Consistent Prerelease Version Labels)**：
+   - 新增统一的 `AppVersionInfo` 版本文本入口，优先读取 `AssemblyInformationalVersionAttribute`，并剥离 SDK 自动追加的 `+提交哈希` 构建元数据；
+   - 侧边栏、关于页、更新状态、托盘菜单、启动日志与 User-Agent 统一显示完整语义版本 `v1.7.3-beta.5`，正式版仍按 `v1.7.3` 格式显示。
 
 ---
 

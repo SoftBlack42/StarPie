@@ -3945,7 +3945,8 @@
                   <TextBlock Text="v1.7.3-beta.5 唤出一二级轮盘全展开 &amp; 开箱高颜值默认配置友好优化" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,10" />
                   <TextBlock Text="• 🌟 【一二级轮盘唤出直展】：在多级轮盘与外圈子环形态下新增「唤出时直接同时展开一二级轮盘」开关，轮盘唤出时全方位子环直接同步呈现，无需拖拽即刻清晰感知并直选子动作；" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                   <TextBlock Text="• 🎨 【开箱新手默认友好性】：全面重塑新用户首次进入的默认轮盘参数与配色：默认启用液态毛玻璃 + 浅色模式 + 纯图标居中高质感布局，四象限丰富常用子动作一览无余；" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
-                  <TextBlock Text="• ⚡ 【子环极速命中与响应】：深度优化多子环常开状态下的极坐标扇区命中与动态高亮，与父级扇区无缝联动，保持 60/120 FPS 丝滑微动效。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                  <TextBlock Text="• ⚡ 【子环极速命中与响应】：深度优化多子环常开状态下的极坐标扇区命中与动态高亮，与父级扇区无缝联动，保持 60/120 FPS 丝滑微动效。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                  <TextBlock Text="• 🏷️ 【完整预发布版本标识】：侧边栏、关于页、更新状态、托盘菜单与启动日志统一显示 v1.7.3-beta.5，并自动隐藏 SDK 附加的提交哈希。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
                 </StackPanel>
               </Border>
               <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="20" Margin="0,0,0,14" SnapsToDevicePixels="True" UseLayoutRounding="True" RenderOptions.ClearTypeHint="Enabled">

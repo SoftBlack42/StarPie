@@ -516,7 +516,7 @@ public partial class SettingsWindow : Window
 		catch
 		{
 		}
-		string text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5");
+		string text = AppVersionInfo.DisplayVersionWithPrefix;
 		if (SidebarVersionText != null)
 		{
 			SidebarVersionText.Text = text;
@@ -1465,7 +1465,7 @@ public partial class SettingsWindow : Window
 		string lastCheck = string.IsNullOrEmpty(ConfigManager.CurrentConfig.LastCheckUpdateTime) ? "未检查" : ConfigManager.CurrentConfig.LastCheckUpdateTime;
 		if (UpdateStatusDescText != null)
 		{
-			UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5"} (64位)。上次检查: {lastCheck}";
+			UpdateStatusDescText.Text = $"当前运行版本: StarPie v{AppVersionInfo.DisplayVersion} (64位)。上次检查: {lastCheck}";
 		}
 		UpdateOcrBadgeUi();
 		UpdateRollbackBadgeAndCandidates();
@@ -12837,7 +12837,7 @@ public partial class SettingsWindow : Window
 				}
 				if (UpdateStatusDescText != null)
 				{
-					UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5"} (64位)。线上最新版本: {rel.TagName}。上次检查: {ConfigManager.CurrentConfig?.LastCheckUpdateTime}";
+					UpdateStatusDescText.Text = $"当前运行版本: StarPie v{AppVersionInfo.DisplayVersion} (64位)。线上最新版本: {rel.TagName}。上次检查: {ConfigManager.CurrentConfig?.LastCheckUpdateTime}";
 				}
 				if (UpdateNewVersionPanel != null)
 				{
@@ -13283,7 +13283,7 @@ public partial class SettingsWindow : Window
 		try
 		{
 			using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-			client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("StarPie-Desktop", "1.7.3-beta.5"));
+			client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("StarPie-Desktop", AppVersionInfo.DisplayVersion));
 			client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
 
 			string json = await client.GetStringAsync("https://api.github.com/repos/SoftBlack42/StarPie/contributors");
