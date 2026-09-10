@@ -30,12 +30,14 @@ public partial class RadialWindow : Window
 
 	private const uint MONITOR_DEFAULTTONEAREST = 2;
 	private const uint SWP_NOSIZE = 0x0001;
+	private const uint SWP_NOMOVE = 0x0002;
 	private const uint SWP_NOACTIVATE = 0x0010;
 	private const uint SWP_NOZORDER = 0x0004;
 	private const int WM_DPICHANGED = 0x02E0;
 	private const int GWL_EXSTYLE = -20;
 	private const nint WS_EX_NOACTIVATE = 0x08000000;
 	private const nint WS_EX_TOOLWINDOW = 0x00000080;
+	private static readonly nint HWND_TOPMOST = new(-1);
 
 	[StructLayout(LayoutKind.Sequential)]
 	public struct RECT
@@ -152,6 +154,19 @@ public partial class RadialWindow : Window
 			int physicalLeft = (int)Math.Round(_centerPoint.X - physicalWidth / 2.0);
 			int physicalTop = (int)Math.Round(_centerPoint.Y - physicalHeight / 2.0);
 			SetWindowPos(handle, IntPtr.Zero, physicalLeft, physicalTop, physicalWidth, physicalHeight, SWP_NOACTIVATE | SWP_NOZORDER);
+		}
+
+		/// <summary>
+		/// 常驻透明 HWND 在内容隐藏期间可能被新创建的窗口压到后面；每次揭示内容前重新置于最上层窗口带。
+		/// SWP_NOACTIVATE 保证不抢占当前前台应用与键盘焦点。
+		/// </summary>
+		private void EnsureTopmostNoActivate()
+		{
+			nint handle = new WindowInteropHelper(this).Handle;
+			if (handle != IntPtr.Zero)
+			{
+				SetWindowPos(handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+			}
 		}
 
 		/// <summary>
@@ -577,6 +592,7 @@ public partial class RadialWindow : Window
 				return;
 			}
 			CenterOnPhysically(_centerPoint.X, _centerPoint.Y);
+			EnsureTopmostNoActivate();
 			MainGrid.Visibility = Visibility.Visible;
 			StartIntroAnimation(presentationVersion);
 		}), DispatcherPriority.Render);
