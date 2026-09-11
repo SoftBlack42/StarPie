@@ -91,6 +91,9 @@ public class WheelProfile : INotifyPropertyChanged
 	/// <summary>当前活跃的轮盘层级索引（默认 0 = 第 1 层）</summary>
 	public int ActiveLayerIndex { get; set; } = 0;
 
+	/// <summary>本方案专属的唤醒触发键；为 null 表示跟随全局 AppConfig.Trigger。仅当前台进程命中本 profile 且此字段非 null 时生效。</summary>
+	public TriggerConfig? Trigger { get; set; } = null;
+
 	public event PropertyChangedEventHandler? PropertyChanged;
 
 	protected void OnPropertyChanged(string propertyName)
@@ -261,7 +264,8 @@ public class WheelProfile : INotifyPropertyChanged
 			CenterAction = this.CenterAction?.Clone(),
 			ActiveLayerIndex = this.ActiveLayerIndex,
 			Actions = new List<ActionItem>(),
-			Layers = new List<WheelLayer>()
+			Layers = new List<WheelLayer>(),
+			Trigger = this.Trigger?.Clone()
 		};
 		foreach (var layer in this.Layers)
 		{

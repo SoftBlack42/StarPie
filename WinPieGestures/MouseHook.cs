@@ -89,6 +89,10 @@ public class MouseHook
 
 	private nint _hookId = IntPtr.Zero;
 
+	// 唤醒手势按下闩锁：记录“确实由本钩子发起并被 GestureController 接管”的触发物理键名（如 "XButton1"）。
+	// 抬起时优先按闩锁值匹配同一物理键，避免手势途中前台焦点被抢导致重新解析的生效键变化、抬起事件被整条丢弃。
+	private string? _latchedTriggerButton;
+
 	private readonly object _lifecycleSync = new object();
 
 	private Thread? _hookThread;
@@ -432,27 +436,54 @@ public class MouseHook
 			}
 			var triggerConfig = ConfigManager.CurrentConfig?.Trigger;
 			bool isMouseTrigger = triggerConfig == null || string.Equals(triggerConfig.TriggerType, "Mouse", StringComparison.OrdinalIgnoreCase);
+			string text2 = triggerConfig?.MouseButton ?? ConfigManager.CurrentConfig?.TriggerButton ?? "RightButton";
+			// per-app 唤醒触发键：若前台进程命中的方案单独设置了 Trigger，则改用该方案的类型与按键门控事件源；
+			// 类型不同时（如全局鼠标、此 app 键盘）另一类物理键不唤醒、直接穿透放行。无覆盖时上面两行即旧行为，零回归。
+			TriggerConfig? profileTriggerOverride = ConfigManager.GetActiveProfileTriggerOverride();
+			if (profileTriggerOverride != null)
+			{
+				isMouseTrigger = string.Equals(profileTriggerOverride.TriggerType, "Mouse", StringComparison.OrdinalIgnoreCase);
+				text2 = profileTriggerOverride.MouseButton ?? ConfigManager.CurrentConfig?.TriggerButton ?? "RightButton";
+			}
 			if (isMouseTrigger)
 			{
-				string text2 = triggerConfig?.MouseButton ?? ConfigManager.CurrentConfig?.TriggerButton ?? "RightButton";
 				bool num2 = flag && string.Equals(text, text2, StringComparison.OrdinalIgnoreCase);
-				bool flag3 = flag2 && string.Equals(text, text2, StringComparison.OrdinalIgnoreCase);
+				// 按下：命中当前生效键且被手势控制器接管，则闩锁记录该物理键。
 				if (num2)
 				{
 					MouseEventArgs e4 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 					OnTriggerButtonDown?.Invoke(this, e4);
 					if (e4.Handled)
 					{
+						_latchedTriggerButton = text;
 						return 1;
 					}
 				}
-				else if (flag3)
+				// 抬起：优先按闩锁值匹配同一物理键（不受手势途中前台焦点变化后重新解析的生效键影响），处理后复位。
+				else if (_latchedTriggerButton != null)
 				{
-					MouseEventArgs e5 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
-					OnTriggerButtonUp?.Invoke(this, e5);
-					if (e5.Handled)
+					if (flag2 && string.Equals(text, _latchedTriggerButton, StringComparison.OrdinalIgnoreCase))
 					{
-						return 1;
+						_latchedTriggerButton = null;
+						MouseEventArgs e5 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+						OnTriggerButtonUp?.Invoke(this, e5);
+						if (e5.Handled)
+						{
+							return 1;
+						}
+					}
+				}
+				else
+				{
+					bool flag3 = flag2 && string.Equals(text, text2, StringComparison.OrdinalIgnoreCase);
+					if (flag3)
+					{
+						MouseEventArgs e5 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+						OnTriggerButtonUp?.Invoke(this, e5);
+						if (e5.Handled)
+						{
+							return 1;
+						}
 					}
 				}
 			}

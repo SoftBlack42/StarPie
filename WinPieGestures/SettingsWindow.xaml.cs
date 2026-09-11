@@ -89,6 +89,9 @@ public partial class SettingsWindow : Window
 
 	private bool _isRecordingTrigger;
 
+	// per-app 唤醒触发键：当前录制目标。为 null 表示录制到全局 AppConfig.Trigger；非 null 表示录制到该程序专属方案的 Trigger。
+	private WheelProfile? _triggerRecordingTarget;
+
 	private System.Windows.Media.Brush? _originalBadgeBorderBrush;
 
 	private WheelProfile? _selectedProfile;
@@ -3682,7 +3685,99 @@ public partial class SettingsWindow : Window
 					_isUpdatingUi = oldUpdating;
 				}
 			}
+
+			// per-app 唤醒键卡片：同步回填当前方案的触发键状态
+			UpdateProfileTriggerBadge(_selectedProfile);
 		}
+	}
+
+	/// <summary>
+	/// 回填程序专属方案的「唤醒键」卡片：勾选态 / 徽标文本 / 录制与清除按钮可用性。
+	/// </summary>
+	private void UpdateProfileTriggerBadge(WheelProfile? profile)
+	{
+		if (profile == null)
+		{
+			return;
+		}
+		bool hasCustom = profile.Trigger != null;
+		if (ProfileTriggerEnableCheckBox != null)
+		{
+			bool old = _isUpdatingUi;
+			_isUpdatingUi = true;
+			try
+			{
+				ProfileTriggerEnableCheckBox.IsChecked = hasCustom;
+			}
+			finally
+			{
+				_isUpdatingUi = old;
+			}
+			ProfileTriggerEnableCheckBox.Content = I18n.T("ProfileTriggerEnable");
+		}
+		if (ProfileTriggerBadgeText != null)
+		{
+			ProfileTriggerBadgeText.Text = hasCustom ? FormatTriggerDisplay(profile.Trigger!) : I18n.T("ProfileTriggerFollowGlobal");
+		}
+		if (ProfileTriggerTipText != null)
+		{
+			ProfileTriggerTipText.Text = I18n.T("ProfileTriggerTip");
+		}
+		if (ProfileTriggerRecordBtn != null)
+		{
+			ProfileTriggerRecordBtn.IsEnabled = hasCustom;
+			ProfileTriggerRecordBtn.Content = I18n.T("ProfileTriggerRecord");
+		}
+		if (ProfileTriggerClearBtn != null)
+		{
+			ProfileTriggerClearBtn.IsEnabled = hasCustom;
+			ProfileTriggerClearBtn.Content = I18n.T("ProfileTriggerClear");
+		}
+	}
+
+	private void ProfileTriggerEnableCheckBox_Changed(object sender, RoutedEventArgs e)
+	{
+		if (_isUpdatingUi || _isRecordingTrigger || _selectedProfile == null)
+		{
+			return;
+		}
+		if (string.Equals(_selectedProfile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase))
+		{
+			return;
+		}
+		if (ProfileTriggerEnableCheckBox?.IsChecked == true)
+		{
+			// 勾选「单独设置」：以全局触发键为起点深拷贝一份，作为该方案的可编辑副本
+			_selectedProfile.Trigger = (ConfigManager.CurrentConfig?.Trigger ?? new TriggerConfig()).Clone();
+		}
+		else
+		{
+			// 取消勾选：回退跟随全局
+			_selectedProfile.Trigger = null;
+		}
+		ScheduleAutoSave();
+		UpdateProfileTriggerBadge(_selectedProfile);
+	}
+
+	private void ProfileTriggerRecordBtn_Click(object sender, RoutedEventArgs e)
+	{
+		if (_selectedProfile == null || _selectedProfile.Trigger == null || _isRecordingTrigger)
+		{
+			return;
+		}
+		_triggerRecordingTarget = _selectedProfile;
+		StartTriggerRecording();
+	}
+
+	private void ProfileTriggerClearBtn_Click(object sender, RoutedEventArgs e)
+	{
+		if (_selectedProfile == null || _isRecordingTrigger)
+		{
+			return;
+		}
+		_selectedProfile.Trigger = null;
+		ScheduleAutoSave();
+		UpdateProfileTriggerBadge(_selectedProfile);
 	}
 
 	private void ProfileBoundProcessesTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -8510,6 +8605,7 @@ public partial class SettingsWindow : Window
 	{
 		if (!_isRecordingTrigger)
 		{
+			_triggerRecordingTarget = null; // 全局「触发与场景」录制入口：目标固定为全局
 			StartTriggerRecording();
 		}
 		else
@@ -8567,6 +8663,16 @@ public partial class SettingsWindow : Window
 			LiveSensorDot.Fill = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#10B981"));
 		}
 		UpdateTriggerBadgeDisplay();
+		// per-app：录制目标是程序专属方案时，仅当它仍是当前选中方案才刷新共享卡片控件（否则会把已切换到其它方案的卡片刷串）；
+		// 无论如何都复位录制目标——数据已落到正确方案对象，切回该方案时徽标会随选中自动刷新。
+		if (_triggerRecordingTarget != null)
+		{
+			if (ReferenceEquals(_triggerRecordingTarget, _selectedProfile))
+			{
+				UpdateProfileTriggerBadge(_selectedProfile);
+			}
+			_triggerRecordingTarget = null;
+		}
 	}
 
 	private void ResetDefaultTriggerButton_Click(object sender, RoutedEventArgs e)
@@ -8651,7 +8757,7 @@ public partial class SettingsWindow : Window
 			}
 			if (_isRecordingTrigger)
 			{
-				ConfigManager.CurrentConfig.Trigger = new TriggerConfig
+				TriggerConfig newTrigger = new TriggerConfig
 				{
 					TriggerType = "Mouse",
 					MouseButton = mouseButton,
@@ -8660,21 +8766,30 @@ public partial class SettingsWindow : Window
 					RequireAlt = (((((int)currentModifiers & 1))) > 0),
 					RequireWin = (((((int)currentModifiers & 8))) > 0)
 				};
-				// 若录入的是单独鼠标左键（无修饰键），自动开启长按呼出，确保长按稳定唤醒轮盘，单机保持原生点击
-				if (mouseButton == "LeftButton" &&
-				    !ConfigManager.CurrentConfig.Trigger.RequireCtrl &&
-				    !ConfigManager.CurrentConfig.Trigger.RequireShift &&
-				    !ConfigManager.CurrentConfig.Trigger.RequireAlt &&
-				    !ConfigManager.CurrentConfig.Trigger.RequireWin)
+				newTrigger.DisplayText = FormatTriggerDisplay(newTrigger);
+				if (_triggerRecordingTarget != null)
 				{
-					ConfigManager.CurrentConfig.LongPressTrigger = true;
-					if (LongPressTriggerCheckBox != null)
-					{
-						LongPressTriggerCheckBox.IsChecked = true;
-					}
+					// 录制到程序专属方案：仅回写该方案的 Trigger，不触碰全局 Trigger/TriggerButton/长按特例
+					_triggerRecordingTarget.Trigger = newTrigger;
 				}
-				ConfigManager.CurrentConfig.Trigger.DisplayText = FormatTriggerDisplay(ConfigManager.CurrentConfig.Trigger);
-				ConfigManager.CurrentConfig.TriggerButton = mouseButton;
+				else
+				{
+					ConfigManager.CurrentConfig.Trigger = newTrigger;
+					// 若录入的是单独鼠标左键（无修饰键），自动开启长按呼出，确保长按稳定唤醒轮盘，单机保持原生点击
+					if (mouseButton == "LeftButton" &&
+					    !newTrigger.RequireCtrl &&
+					    !newTrigger.RequireShift &&
+					    !newTrigger.RequireAlt &&
+					    !newTrigger.RequireWin)
+					{
+						ConfigManager.CurrentConfig.LongPressTrigger = true;
+						if (LongPressTriggerCheckBox != null)
+						{
+							LongPressTriggerCheckBox.IsChecked = true;
+						}
+					}
+					ConfigManager.CurrentConfig.TriggerButton = mouseButton;
+				}
 				ScheduleAutoSave();
 				StopTriggerRecording(saved: true);
 			}
@@ -8798,7 +8913,7 @@ public partial class SettingsWindow : Window
 		}
 		if (_isRecordingTrigger && (int)e.Key != 118 && (int)e.Key != 119 && (int)e.Key != 116 && (int)e.Key != 117 && (int)e.Key != 120 && (int)e.Key != 121 && (int)e.Key != 70 && (int)e.Key != 71)
 		{
-			ConfigManager.CurrentConfig.Trigger = new TriggerConfig
+			TriggerConfig newTrigger = new TriggerConfig
 			{
 				TriggerType = "Keyboard",
 				Key = ((object)e.Key/*cast due to constrained. prefix*/).ToString(),
@@ -8808,7 +8923,16 @@ public partial class SettingsWindow : Window
 				RequireAlt = (((((int)modifiers & 1))) > 0),
 				RequireWin = (((((int)modifiers & 8))) > 0)
 			};
-			ConfigManager.CurrentConfig.Trigger.DisplayText = FormatTriggerDisplay(ConfigManager.CurrentConfig.Trigger);
+			newTrigger.DisplayText = FormatTriggerDisplay(newTrigger);
+			if (_triggerRecordingTarget != null)
+			{
+				// 录制到程序专属方案：仅回写该方案的 Trigger
+				_triggerRecordingTarget.Trigger = newTrigger;
+			}
+			else
+			{
+				ConfigManager.CurrentConfig.Trigger = newTrigger;
+			}
 			ScheduleAutoSave();
 			StopTriggerRecording(saved: true);
 		}

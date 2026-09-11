@@ -345,6 +345,60 @@ public static class ConfigManager
 		}
 	}
 
+	/// <summary>
+	/// 返回当前前台进程命中的程序专属方案的 Trigger 覆盖；未命中任何设了 Trigger 的方案时返回 null（表示跟随全局）。
+	/// 供热路径（鼠标/键盘钩子与手势控制器）解析 per-app 唤醒键，与全局逻辑保持向后兼容：无覆盖时恒返回 null。
+	/// </summary>
+	public static TriggerConfig? GetActiveProfileTriggerOverride()
+	{
+		if (CurrentConfig == null)
+		{
+			return null;
+		}
+		var profiles = CurrentConfig.Profiles;
+		if (profiles == null || profiles.Count == 0)
+		{
+			return null;
+		}
+
+		// 快路径：没有任何方案设置了独立 Trigger 时直接返回 null（跟随全局），
+		// 避免在鼠标/键盘钩子每次事件都解析前台进程并匹配方案——零覆盖场景的热路径成本与改动前一致。
+		bool anyOverride = false;
+		for (int i = 0; i < profiles.Count; i++)
+		{
+			if (profiles[i]?.Trigger != null)
+			{
+				anyOverride = true;
+				break;
+			}
+		}
+		if (!anyOverride)
+		{
+			return null;
+		}
+
+		string proc = ActiveWindowHelper.GetActiveWindowProcessName();
+		if (string.IsNullOrEmpty(proc))
+		{
+			return null;
+		}
+		string cleanProc = proc.Trim().ToLowerInvariant();
+		string cleanBase = cleanProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+			? cleanProc.Substring(0, cleanProc.Length - 4)
+			: cleanProc;
+
+		// 独立匹配循环：命中首个匹配的非 Global 方案即以其 Trigger 为准（与原经由 GetProfileForProcess 的首匹配语义一致）。
+		// 刻意不走 Global 兜底，避免在钩子线程调用 GetGlobalProfile() 触发 Profiles.Insert 写操作。
+		for (int i = 0; i < profiles.Count; i++)
+		{
+			if (ProfileMatchesProcess(profiles[i], cleanProc, cleanBase))
+			{
+				return profiles[i].Trigger;
+			}
+		}
+		return null;
+	}
+
 	public static WheelProfile GetProfileForProcess(string processName)
 	{
 		if (string.IsNullOrEmpty(processName))
@@ -358,61 +412,83 @@ public static class ConfigManager
 
 		if (CurrentConfig?.Profiles != null)
 		{
-			// 1. 优先在所有非 Global 的专属方案中匹配绑定的程序情景
+			// 优先在所有非 Global 的专属方案中匹配绑定的程序情景
 			foreach (WheelProfile profile in CurrentConfig.Profiles)
 			{
-				if (profile == null || string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase))
-				{
-					continue;
-				}
-
-				// 检查 BoundProcesses 字段（支持逗号/分号/空格分隔多个进程）
-				if (!string.IsNullOrWhiteSpace(profile.BoundProcesses))
-				{
-					string[] tokens = profile.BoundProcesses.Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-					foreach (string token in tokens)
-					{
-						string target = token.Trim().ToLowerInvariant();
-						string targetBase = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-							? target.Substring(0, target.Length - 4)
-							: target;
-
-						if (target == cleanProc || targetBase == cleanBase)
-						{
-							return profile;
-						}
-					}
-				}
-
-				// 回退检查 ProcessName 字段
-				string pProc = profile.ProcessName.Trim().ToLowerInvariant();
-				string pBase = pProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-					? pProc.Substring(0, pProc.Length - 4)
-					: pProc;
-
-				if (pProc == cleanProc || pBase == cleanBase)
+				if (ProfileMatchesProcess(profile, cleanProc, cleanBase))
 				{
 					return profile;
 				}
+			}
+		}
 
-				// 检查 DisplayName 字段（若用户将显示名称直接设为了目标程序名或进程名）
-				if (!string.IsNullOrWhiteSpace(profile.DisplayName))
+		// 无专属方案匹配时兜底回落至 Global
+		return GetGlobalProfile();
+	}
+
+	/// <summary>
+	/// 判断某个方案是否绑定到目标进程：Global 恒不匹配；依次比对 BoundProcesses（两级切分，兼容带空格进程名与历史空格分隔）、ProcessName、DisplayName。
+	/// </summary>
+	private static bool ProfileMatchesProcess(WheelProfile? profile, string cleanProc, string cleanBase)
+	{
+		if (profile == null || string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+
+		// 单个 token 是否命中目标进程（同时比对带 .exe 全名与去 .exe base）。
+		bool TokenMatches(string raw)
+		{
+			string target = raw.Trim().ToLowerInvariant();
+			string targetBase = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+				? target.Substring(0, target.Length - 4)
+				: target;
+			return target == cleanProc || targetBase == cleanBase;
+		}
+
+		// 检查 BoundProcesses 字段（支持逗号/分号/竖线/空格分隔多个进程）
+		if (!string.IsNullOrWhiteSpace(profile.BoundProcesses))
+		{
+			// 分隔符策略（两级）：先按显式分隔符逗号/分号/竖线切，保留 token 内部空格以匹配带空格进程名（如 "Qoder CN IDE.exe"）；
+			// 再对每个 token 追加按空格细分，兼容历史以空格分隔多个进程的混写写法（如 "a.exe, b.exe c.exe"）。
+			char[] explicitDelims = new[] { ',', ';', '|' };
+			string[] tokens = profile.BoundProcesses.Split(explicitDelims, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string token in tokens)
+			{
+				string trimmed = token.Trim();
+				if (trimmed.Length == 0)
 				{
-					string dProc = profile.DisplayName.Trim().ToLowerInvariant();
-					string dBase = dProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-						? dProc.Substring(0, dProc.Length - 4)
-						: dProc;
-
-					if (dProc == cleanProc || dBase == cleanBase)
+					continue;
+				}
+				// 1) 整体匹配：保留进程名内部空格
+				if (TokenMatches(trimmed))
+				{
+					return true;
+				}
+				// 2) 空格细分匹配：兼容历史空格分隔写法
+				foreach (string sub in trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+				{
+					if (TokenMatches(sub))
 					{
-						return profile;
+						return true;
 					}
 				}
 			}
 		}
 
-		// 2. 无专属方案匹配时兜底回落至 Global
-		return GetGlobalProfile();
+		// 回退检查 ProcessName 字段
+		if (TokenMatches(profile.ProcessName))
+		{
+			return true;
+		}
+
+		// 检查 DisplayName 字段（若用户将显示名称直接设为了目标程序名或进程名）
+		if (!string.IsNullOrWhiteSpace(profile.DisplayName) && TokenMatches(profile.DisplayName))
+		{
+			return true;
+		}
+
+		return false;
 	}
 
 	public static WheelProfile GetGlobalProfile()

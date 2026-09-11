@@ -2454,6 +2454,27 @@
                             </StackPanel>
                           </Grid>
                           <TextBlock Text="💡 提示：在此程序处于前台活跃状态时唤起轮盘将自动应用本方案。支持以英文逗号分隔多个进程名 (例如 chrome.exe, msedge.exe)。" FontSize="10" Foreground="{DynamicResource TextMutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                          <!-- per-app 唤醒触发键（可选）：为 null 时跟随全局「触发与场景」 -->
+                          <Border Name="ProfileTriggerCardBorder" Margin="0,10,0,0" Background="{DynamicResource SubtleCardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8">
+                            <StackPanel>
+                              <CheckBox Name="ProfileTriggerEnableCheckBox" Content="⚡ 为此软件单独设置唤醒键" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Checked="ProfileTriggerEnableCheckBox_Changed" Unchecked="ProfileTriggerEnableCheckBox_Changed" />
+                              <TextBlock Name="ProfileTriggerTipText" Text="未单独设置时，此软件唤醒轮盘使用全局「触发与场景」的快捷按键。" FontSize="10" Foreground="{DynamicResource TextMutedBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                              <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                  <ColumnDefinition Width="*" />
+                                  <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Background="{DynamicResource WindowBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="8,4" VerticalAlignment="Center" Margin="0,0,8,0">
+                                  <TextBlock Name="ProfileTriggerBadgeText" Text="跟随全局" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                  <Button Name="ProfileTriggerRecordBtn" Content="🔴 录制" Style="{StaticResource ModernButtonStyle}" Height="26" Padding="8,0" Margin="0,0,4,0" IsEnabled="False" Click="ProfileTriggerRecordBtn_Click" />
+                                  <Button Name="ProfileTriggerClearBtn" Content="✖ 清除" Style="{StaticResource ModernButtonStyle}" Height="26" Padding="8,0" IsEnabled="False" Click="ProfileTriggerClearBtn_Click" />
+                                </StackPanel>
+                              </Grid>
+                            </StackPanel>
+                          </Border>
                         </StackPanel>
                       </StackPanel>
                     </Border>

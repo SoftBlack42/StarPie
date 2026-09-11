@@ -1109,6 +1109,41 @@ public static class I18n
 			[LanguageCode.En] = "🟢 [Left Mouse Button] bound: Long-press to open radial menu, quick click maintains normal click function!",
 			[LanguageCode.Ja] = "🟢 【マウス左ボタン】設定完了：長押しでホイール起動、短押しクリックは通常の操作を維持します！"
 		};
+		dictionary["ProfileTriggerEnable"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "⚡ 为此软件单独设置唤醒键",
+			[LanguageCode.ZhTw] = "⚡ 為此軟體單獨設定喚醒鍵",
+			[LanguageCode.En] = "⚡ Set a dedicated wake-up key for this app",
+			[LanguageCode.Ja] = "⚡ このアプリ専用の起動キーを設定"
+		};
+		dictionary["ProfileTriggerFollowGlobal"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "跟随全局",
+			[LanguageCode.ZhTw] = "跟隨全域",
+			[LanguageCode.En] = "Follow global",
+			[LanguageCode.Ja] = "グローバルに追従"
+		};
+		dictionary["ProfileTriggerRecord"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "🔴 录制",
+			[LanguageCode.ZhTw] = "🔴 錄製",
+			[LanguageCode.En] = "🔴 Record",
+			[LanguageCode.Ja] = "🔴 記録"
+		};
+		dictionary["ProfileTriggerClear"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "✖ 清除",
+			[LanguageCode.ZhTw] = "✖ 清除",
+			[LanguageCode.En] = "✖ Clear",
+			[LanguageCode.Ja] = "✖ クリア"
+		};
+		dictionary["ProfileTriggerTip"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "未单独设置时，此软件唤醒轮盘使用全局「触发与场景」的快捷按键。",
+			[LanguageCode.ZhTw] = "未單獨設定時，此軟體喚醒輪盤使用全域「觸發與場景」的快捷按鍵。",
+			[LanguageCode.En] = "When not set separately, this app uses the global \"Trigger & Scene\" shortcut key to open the radial menu.",
+			[LanguageCode.Ja] = "個別設定しない場合、このアプリはグローバルの「トリガーとシーン」ショートカットキーでホイールを起動します。"
+		};
 		dictionary["LongPressTriggerTitle"] = new Dictionary<LanguageCode, string>
 		{
 			[LanguageCode.ZhCn] = "长按触发按键呼出面板 (可选)",
