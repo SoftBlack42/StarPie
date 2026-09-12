@@ -821,6 +821,29 @@
                       <TextBlock Text="调节呼出轮盘后光标停留在中心核心圆触发核心动作或静默取消的有效半径。数值较小时轻划即可命中扇区，数值较大时中心判定区更宽容，更易触发中心核圆动作或防手抖取消。" FontSize="10.5" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
                     </StackPanel>
                   </Border>
+
+                  <!-- 3. 鼠标右键释放防抖 -->
+                  <Border BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,12">
+                    <StackPanel>
+                      <CheckBox Name="MouseReleaseDebounceCheckBox" Style="{StaticResource ToggleSwitchStyle}" Checked="MouseReleaseDebounceCheckBox_Changed" Unchecked="MouseReleaseDebounceCheckBox_Changed">
+                        <StackPanel Margin="6,0,0,0">
+                          <TextBlock Name="MouseReleaseDebounceTitleText" Text="启用鼠标右键释放防抖" FontWeight="Medium" Foreground="{DynamicResource TextPrimaryBrush}" />
+                          <TextBlock Name="MouseReleaseDebounceDescText" Text="收到右键松开后短暂等待；期间若再次按下，则视为微动抖动并保持当前轮盘，不执行动作。" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </CheckBox>
+                      <StackPanel Name="MouseReleaseDebouncePanel" Margin="22,8,0,0">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="64" />
+                          </Grid.ColumnDefinitions>
+                          <Slider Name="MouseReleaseDebounceSlider" Minimum="1" Maximum="100" Value="12" SmallChange="1" LargeChange="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" ValueChanged="MouseReleaseDebounceSlider_ValueChanged" />
+                          <TextBlock Name="MouseReleaseDebounceValueLabel" Grid.Column="1" Text="12 ms" FontWeight="Bold" Foreground="{DynamicResource AccentPrimaryBrush}" FontSize="13" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Name="MouseReleaseDebounceValueDescText" Text="建议 8～15 ms，默认 12 ms。数值越大越能过滤微动抖动，但松手后的动作延迟也会相应增加。" FontSize="10.5" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
                 </StackPanel>
               </Border>
               <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="20" Margin="0,0,0,14">

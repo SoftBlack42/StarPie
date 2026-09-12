@@ -881,6 +881,23 @@ public partial class SettingsWindow : Window
 
 		ThresholdSlider.Value = ConfigManager.CurrentConfig.DragThreshold;
 		ThresholdValueLabel.Text = $"{ConfigManager.CurrentConfig.DragThreshold:0} px";
+		if (MouseReleaseDebounceCheckBox != null)
+		{
+			MouseReleaseDebounceCheckBox.IsChecked = ConfigManager.CurrentConfig.EnableMouseReleaseDebounce;
+		}
+		int mouseReleaseDebounceMs = Math.Clamp(ConfigManager.CurrentConfig.MouseReleaseDebounceMs, 1, 100);
+		if (MouseReleaseDebounceSlider != null)
+		{
+			MouseReleaseDebounceSlider.Value = mouseReleaseDebounceMs;
+		}
+		if (MouseReleaseDebounceValueLabel != null)
+		{
+			MouseReleaseDebounceValueLabel.Text = $"{mouseReleaseDebounceMs} ms";
+		}
+		if (MouseReleaseDebouncePanel != null)
+		{
+			MouseReleaseDebouncePanel.Visibility = ConfigManager.CurrentConfig.EnableMouseReleaseDebounce ? Visibility.Visible : Visibility.Collapsed;
+		}
 		if (CoreDeadzoneSlider != null)
 		{
 			double deadzone = ConfigManager.CurrentConfig.CoreDeadzoneRadius > 0.0 ? ConfigManager.CurrentConfig.CoreDeadzoneRadius : 35.0;
@@ -1871,6 +1888,18 @@ public partial class SettingsWindow : Window
 		{
 			GestureSensitivityTitleText.Text = I18n.T("GestureSensitivityTitle");
 		}
+		if (MouseReleaseDebounceTitleText != null)
+		{
+			MouseReleaseDebounceTitleText.Text = I18n.T("MouseReleaseDebounceTitle");
+		}
+		if (MouseReleaseDebounceDescText != null)
+		{
+			MouseReleaseDebounceDescText.Text = I18n.T("MouseReleaseDebounceDesc");
+		}
+		if (MouseReleaseDebounceValueDescText != null)
+		{
+			MouseReleaseDebounceValueDescText.Text = I18n.T("MouseReleaseDebounceValueDesc");
+		}
 		if (GestureMappingTitleText != null)
 		{
 			GestureMappingTitleText.Text = I18n.T("GestureMappingTitleText");
@@ -2784,6 +2813,14 @@ public partial class SettingsWindow : Window
 			if (ThresholdSlider != null)
 			{
 				ConfigManager.CurrentConfig.DragThreshold = ThresholdSlider.Value;
+			}
+			if (MouseReleaseDebounceCheckBox != null)
+			{
+				ConfigManager.CurrentConfig.EnableMouseReleaseDebounce = MouseReleaseDebounceCheckBox.IsChecked == true;
+			}
+			if (MouseReleaseDebounceSlider != null)
+			{
+				ConfigManager.CurrentConfig.MouseReleaseDebounceMs = Math.Clamp((int)Math.Round(MouseReleaseDebounceSlider.Value), 1, 100);
 			}
 			if (CoreDeadzoneSlider != null)
 			{
@@ -8926,6 +8963,36 @@ public partial class SettingsWindow : Window
 			return;
 		}
 		ConfigManager.CurrentConfig.DragThreshold = e.NewValue;
+		ScheduleAutoSave();
+	}
+
+	private void MouseReleaseDebounceCheckBox_Changed(object sender, RoutedEventArgs e)
+	{
+		bool enabled = MouseReleaseDebounceCheckBox?.IsChecked == true;
+		if (MouseReleaseDebouncePanel != null)
+		{
+			MouseReleaseDebouncePanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+		}
+		if (_isUpdatingUi || ConfigManager.CurrentConfig == null)
+		{
+			return;
+		}
+		ConfigManager.CurrentConfig.EnableMouseReleaseDebounce = enabled;
+		ScheduleAutoSave();
+	}
+
+	private void MouseReleaseDebounceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+	{
+		int debounceMs = Math.Clamp((int)Math.Round(e.NewValue), 1, 100);
+		if (MouseReleaseDebounceValueLabel != null)
+		{
+			MouseReleaseDebounceValueLabel.Text = $"{debounceMs} ms";
+		}
+		if (_isUpdatingUi || ConfigManager.CurrentConfig == null)
+		{
+			return;
+		}
+		ConfigManager.CurrentConfig.MouseReleaseDebounceMs = debounceMs;
 		ScheduleAutoSave();
 	}
 

@@ -44,6 +44,20 @@ public class GestureController : IDisposable
 
 	private bool _mouseTriggerDown;
 
+	// 鼠标右键释放防抖：UP 先进入短暂稳定等待，若窗口内再次收到 DOWN，
+	// 则判定为微动抖动并继续当前手势，不关闭轮盘、不执行动作。
+	private readonly object _mouseReleaseDebounceLock = new object();
+
+	private System.Threading.Timer? _mouseReleaseDebounceTimer;
+
+	private int _mouseReleaseDebounceGeneration;
+
+	private bool _mouseReleasePending;
+
+	private Point _pendingMouseReleasePosition;
+
+	private string _pendingMouseReleaseButton = "RightButton";
+
 	// ---- 键盘触发穿透模式 ----
 	// 触发键 KeyDown/KeyUp 一律原生放行，仅用持握时长+拖动阈值唤出轮盘。
 	// _kbTriggerWaiting 区分"键盘触发正在等待阈值"与鼠标触发的等待态（后者仍需吞键）。
@@ -804,6 +818,16 @@ public class GestureController : IDisposable
 		{
 			return;
 		}
+		if (TryCancelPendingMouseReleaseAsBounce())
+		{
+			_mouseTriggerDown = true;
+			if (_isWaitingForThreshold && ConfigManager.CurrentConfig.LongPressTrigger)
+			{
+				StartLongPressTimer();
+			}
+			e.Handled = true;
+			return;
+		}
 		ModifierKeys currentModifiers = KeyboardHook.GetCurrentModifiers();
 		if ((!triggerConfig.RequireCtrl || ((((int)currentModifiers & 2))) != 0) && (!triggerConfig.RequireShift || ((((int)currentModifiers & 4))) != 0) && (!triggerConfig.RequireAlt || ((((int)currentModifiers & 1))) != 0) && (!triggerConfig.RequireWin || ((((int)currentModifiers & 8))) != 0))
 		{
@@ -1282,113 +1306,188 @@ public class GestureController : IDisposable
 			e.Handled = true;
 			return;
 		}
+
+		string triggerButton = triggerConfig.MouseButton ?? ConfigManager.CurrentConfig.TriggerButton ?? "RightButton";
+		bool ownsTriggerState = _mouseTriggerDown || _isGestureActive || _isWaitingForThreshold;
+		bool shouldDebounce = ownsTriggerState &&
+			ConfigManager.CurrentConfig.EnableMouseReleaseDebounce &&
+			string.Equals(triggerButton, "RightButton", StringComparison.OrdinalIgnoreCase);
+
+		if (shouldDebounce)
+		{
+			_mouseTriggerDown = false;
+			CancelLongPressTimer();
+			int debounceMs = Math.Clamp(ConfigManager.CurrentConfig.MouseReleaseDebounceMs, 1, 100);
+			ScheduleMouseReleaseDebounce(e.Position, triggerButton, debounceMs);
+			e.Handled = true;
+			return;
+		}
+
+		e.Handled = CompleteMouseTriggerRelease(e.Position, triggerButton);
+	}
+
+	private bool CompleteMouseTriggerRelease(Point releasePosition, string triggerButton)
+	{
 		bool wasTriggerDown = _mouseTriggerDown;
 		_mouseTriggerDown = false;
 		CancelLongPressTimer();
 
 		if (!wasTriggerDown && !_isGestureActive && !_isWaitingForThreshold)
 		{
-			// 若 StarPie 未曾拦截该按键的物理按下（如隔离模式、全屏抑制、或修饰键不满足），
-			// 绝不可吞掉物理抬起事件，必须直接透传给系统与前台程序！
-			e.Handled = false;
-			return;
+			// StarPie 未接管对应按下时，绝不可吞掉孤立的物理抬起事件。
+			return false;
 		}
 
 		if (_isWaitingForThreshold)
 		{
 			CancelGestureTracking();
 			_isWaitingForThreshold = false;
-			string btn = triggerConfig.MouseButton ?? ConfigManager.CurrentConfig.TriggerButton ?? "RightButton";
-			ThreadPool.QueueUserWorkItem(_ => _mouseHook.ReplayTriggerClick(btn));
-			e.Handled = true;
+			ThreadPool.QueueUserWorkItem(_ => _mouseHook.ReplayTriggerClick(triggerButton));
+			return true;
 		}
-		else
+
+		if (!_isGestureActive)
 		{
-			if (!_isGestureActive)
+			// 等待状态已结束但手势未激活时补发原生点击，避免丢键。
+			ThreadPool.QueueUserWorkItem(_ => _mouseHook.ReplayTriggerClick(triggerButton));
+			return true;
+		}
+
+		var finalState = EndActiveGesture();
+		int finalSector = finalState.Sector;
+		int finalSubSector = finalState.SubSector;
+		WheelProfile? finalProfile = finalState.Profile;
+		RadialWindow? endedWindow = finalState.Window;
+		bool isEscaped = finalState.IsEscaped;
+		long endedPresentationVersion = finalState.PresentationVersion;
+		bool volumeTookOver = _volumeGestureTookOver;
+		float volumeBaseline = _volumeBaseline;
+		// 手势结束：同步复位音量接管状态，杜绝 took/active/baseline 残留污染下一手势。
+		_volumeAdjustActive = false;
+		_volumeGestureTookOver = false;
+		_volumeBaseline = -1f;
+		_volumeBaselineDist = 0.0;
+		_volumeLastPercent = -1f;
+		_volumeLastOsdTick = 0L;
+		_volumeLockedSector = -1;
+		_volumeFlickPrevDist = -1.0;
+		_volumeFlickCancelled = false;
+		_volumeMaxedOutDist = -1.0;
+		((DispatcherObject)Application.Current).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+		{
+			if (volumeTookOver)
 			{
-				// 安全兜底：如果等待状态已结束且手势未处于激活态（说明被提前取消或展示失败），补发重放物理按键，杜绝丢键
-				string btn = triggerConfig.MouseButton ?? ConfigManager.CurrentConfig.TriggerButton ?? "RightButton";
-				ThreadPool.QueueUserWorkItem(_ => _mouseHook.ReplayTriggerClick(btn));
-				e.Handled = true;
+				if (isEscaped && volumeBaseline >= 0f)
+				{
+					SystemVolume.SetVolume(volumeBaseline);
+				}
+				if (endedWindow?.PresentationVersion == endedPresentationVersion)
+				{
+					endedWindow.SetVolumePreview(-1, isActive: false);
+				}
+			}
+			CloseGestureWindow(endedWindow, endedPresentationVersion);
+			if (volumeTookOver)
+			{
 				return;
 			}
-			var finalState = EndActiveGesture();
-			int finalSector = finalState.Sector;
-			int finalSubSector = finalState.SubSector;
-			WheelProfile? finalProfile = finalState.Profile;
-			RadialWindow? endedWindow = finalState.Window;
-			bool isEscaped = finalState.IsEscaped;
-			long endedPresentationVersion = finalState.PresentationVersion;
-			bool volumeTookOver = _volumeGestureTookOver;
-			float volumeBaseline = _volumeBaseline;
-			// 手势结束：同步复位音量接管状态，杜绝 took/active/baseline 残留污染下一手势
-			// （BeginGestureTracking 也已复位，双保险覆盖所有触发路径）
-			_volumeAdjustActive = false;
-			_volumeGestureTookOver = false;
-			_volumeBaseline = -1f;
-			_volumeBaselineDist = 0.0;
-			_volumeLastPercent = -1f;
-			_volumeLastOsdTick = 0L;
-			_volumeLockedSector = -1;
-			_volumeFlickPrevDist = -1.0;
-			_volumeFlickCancelled = false;
-			_volumeMaxedOutDist = -1.0;
-			((DispatcherObject)Application.Current).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			ActionItem? targetAction = null;
+			if (!isEscaped && finalProfile != null)
 			{
-				if (volumeTookOver)
+				if (finalSector >= 0)
 				{
-					// 本手势已接管音量调节：外甩取消则恢复基准音量，正常松手保持最终音量；
-					// 隐藏音量预览并跳过全部动作执行（不再注入单键音量键）
-					if (isEscaped && volumeBaseline >= 0f)
-					{
-						SystemVolume.SetVolume(volumeBaseline);
-					}
-					if (endedWindow?.PresentationVersion == endedPresentationVersion)
-					{
-						endedWindow.SetVolumePreview(-1, isActive: false);
-					}
+					targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
 				}
-				CloseGestureWindow(endedWindow, endedPresentationVersion);
-				if (volumeTookOver)
+				else if (finalSector == -1)
 				{
-					return;
+					targetAction = finalProfile.GetEffectiveCenterAction();
 				}
-				ActionItem? targetAction = null;
-				if (!isEscaped && finalProfile != null)
+			}
+			if (targetAction == null)
+			{
+				ActionItem? cancelAction = ConfigManager.CurrentConfig?.CancelAction;
+				if (isEscaped &&
+					ConfigManager.CurrentConfig?.EnableCancelAction == true &&
+					cancelAction != null && !string.IsNullOrEmpty(cancelAction.Type))
 				{
-					if (finalSector >= 0)
-					{
-						targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
-					}
-					else if (finalSector == -1)
-					{
-						targetAction = finalProfile.GetEffectiveCenterAction();
-					}
+					targetAction = cancelAction;
 				}
-				if (targetAction == null)
-				{
-					// 仅"外甩取消"（释放时处于外甩状态且未选中任何动作）时执行自定义取消动作；
-					// 回到中心取消按钮松手仍为默认静默关闭。
-					ActionItem? cancelAction = ConfigManager.CurrentConfig?.CancelAction;
-					if (_lastEscapedState &&
-						ConfigManager.CurrentConfig?.EnableCancelAction == true &&
-						cancelAction != null && !string.IsNullOrEmpty(cancelAction.Type))
-					{
-						targetAction = cancelAction;
-					}
-				}
-				if (targetAction != null)
-				{
-					SoundEffectManager.Play(SoundType.ActionExecute);
-					ActionExecutor.EnqueueAction(targetAction);
-				}
-				else
-				{
-					SoundEffectManager.Play(SoundType.GestureCancel);
-				}
-			}, DispatcherPriority.Normal, Array.Empty<object>());
-			e.Handled = true;
+			}
+			if (targetAction != null)
+			{
+				ActionExecutor.EnqueueAction(targetAction);
+			}
+		}, DispatcherPriority.Normal, Array.Empty<object>());
+		return true;
+	}
+
+	private void ScheduleMouseReleaseDebounce(Point releasePosition, string triggerButton, int debounceMs)
+	{
+		lock (_mouseReleaseDebounceLock)
+		{
+			if (_mouseReleasePending)
+			{
+				return;
+			}
+			_mouseReleasePending = true;
+			_pendingMouseReleasePosition = releasePosition;
+			_pendingMouseReleaseButton = triggerButton;
+			int generation = ++_mouseReleaseDebounceGeneration;
+			_mouseReleaseDebounceTimer?.Dispose();
+			_mouseReleaseDebounceTimer = new System.Threading.Timer(
+				_ => CompletePendingMouseRelease(generation),
+				null,
+				TimeSpan.FromMilliseconds(debounceMs),
+				System.Threading.Timeout.InfiniteTimeSpan);
 		}
+	}
+
+	private void CompletePendingMouseRelease(int generation)
+	{
+		System.Threading.Timer? completedTimer = null;
+		lock (_mouseReleaseDebounceLock)
+		{
+			if (!_mouseReleasePending || generation != _mouseReleaseDebounceGeneration)
+			{
+				return;
+			}
+			_mouseReleasePending = false;
+			completedTimer = _mouseReleaseDebounceTimer;
+			_mouseReleaseDebounceTimer = null;
+			CompleteMouseTriggerRelease(_pendingMouseReleasePosition, _pendingMouseReleaseButton);
+		}
+		completedTimer?.Dispose();
+	}
+
+	private bool TryCancelPendingMouseReleaseAsBounce()
+	{
+		System.Threading.Timer? timerToCancel;
+		lock (_mouseReleaseDebounceLock)
+		{
+			if (!_mouseReleasePending)
+			{
+				return false;
+			}
+			_mouseReleasePending = false;
+			_mouseReleaseDebounceGeneration++;
+			timerToCancel = _mouseReleaseDebounceTimer;
+			_mouseReleaseDebounceTimer = null;
+		}
+		timerToCancel?.Dispose();
+		return true;
+	}
+
+	private void CancelMouseReleaseDebounce()
+	{
+		System.Threading.Timer? timerToCancel;
+		lock (_mouseReleaseDebounceLock)
+		{
+			_mouseReleasePending = false;
+			_mouseReleaseDebounceGeneration++;
+			timerToCancel = _mouseReleaseDebounceTimer;
+			_mouseReleaseDebounceTimer = null;
+		}
+		timerToCancel?.Dispose();
 	}
 
 	private void Hook_OnMouseWheel(object? sender, MouseWheelHookEventArgs e)
@@ -2084,6 +2183,7 @@ public class GestureController : IDisposable
 
 	public void Dispose()
 	{
+		CancelMouseReleaseDebounce();
 		CancelLongPressTimer();
 		_mouseHook.OnTriggerButtonDown -= Hook_OnTriggerButtonDown;
 		_mouseHook.OnTriggerButtonUp -= Hook_OnTriggerButtonUp;

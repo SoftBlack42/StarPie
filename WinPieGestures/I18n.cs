@@ -1172,6 +1172,27 @@ public static class I18n
 			[LanguageCode.En] = "Gesture segment sensitivity:",
 			[LanguageCode.Ja] = "ジェスチャー感度："
 		};
+		dictionary["MouseReleaseDebounceTitle"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "启用鼠标右键释放防抖",
+			[LanguageCode.ZhTw] = "啟用滑鼠右鍵釋放防抖",
+			[LanguageCode.En] = "Enable right-button release debounce",
+			[LanguageCode.Ja] = "右ボタンのリリースデバウンスを有効化"
+		};
+		dictionary["MouseReleaseDebounceDesc"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "收到右键松开后短暂等待；期间若再次按下，则视为微动抖动并保持当前轮盘，不执行动作。",
+			[LanguageCode.ZhTw] = "收到右鍵放開後短暫等待；期間若再次按下，則視為微動抖動並保持目前輪盤，不執行動作。",
+			[LanguageCode.En] = "Briefly waits after right-button release. If another press arrives during the window, it is treated as switch chatter and the current wheel stays active without executing.",
+			[LanguageCode.Ja] = "右ボタンを離した後に短時間待機し、その間に再度押された場合はチャタリングとして扱い、アクションを実行せず現在のホイールを維持します。"
+		};
+		dictionary["MouseReleaseDebounceValueDesc"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "建议 8～15 ms，默认 12 ms。数值越大越能过滤微动抖动，但松手后的动作延迟也会相应增加。",
+			[LanguageCode.ZhTw] = "建議 8～15 ms，預設 12 ms。數值越大越能過濾微動抖動，但放開後的動作延遲也會相應增加。",
+			[LanguageCode.En] = "Recommended: 8–15 ms; default: 12 ms. Higher values filter more switch chatter but add the same release latency.",
+			[LanguageCode.Ja] = "推奨値は 8～15 ms、既定値は 12 ms です。値を大きくするとチャタリング除去は強くなりますが、リリース後の遅延も増加します。"
+		};
 		dictionary["CancelActionTitleText"] = new Dictionary<LanguageCode, string>
 		{
 			[LanguageCode.ZhCn] = "外甩取消时执行的动作",

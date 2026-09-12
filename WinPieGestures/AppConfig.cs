@@ -14,6 +14,12 @@ public class AppConfig
 
 	public double DragThreshold { get; set; } = 25.0;
 
+	/// <summary>是否启用鼠标右键释放防抖。开启后，抬起需稳定保持指定毫秒数才结束轮盘并执行动作。</summary>
+	public bool EnableMouseReleaseDebounce { get; set; } = true;
+
+	/// <summary>鼠标右键释放稳定等待时间（毫秒），有效范围 1～100，默认 12。</summary>
+	public int MouseReleaseDebounceMs { get; set; } = 12;
+
 	/// <summary>控制台配置模式："Simple"（简单轻量模式，隐藏低频高级微调）或 "Pro"（高级全量模式，开放全部配置）。</summary>
 	public string ConfigMode { get; set; } = "Simple";
 
