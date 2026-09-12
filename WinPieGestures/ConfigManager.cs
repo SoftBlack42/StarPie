@@ -168,6 +168,11 @@ public static class ConfigManager
 		{
 			currentConfig.IsolationMode = "Blacklist";
 		}
+		if (currentConfig.MouseReleaseDebounceMs <= 0)
+		{
+			currentConfig.MouseReleaseDebounceMs = 12;
+		}
+		currentConfig.MouseReleaseDebounceMs = Math.Clamp(currentConfig.MouseReleaseDebounceMs, 1, 100);
 		currentConfig.Profiles ??= new List<WheelProfile>();
 		if (currentConfig.Profiles.Count == 0)
 		{
