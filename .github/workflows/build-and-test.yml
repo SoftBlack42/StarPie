@@ -14,22 +14,148 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Detect Build-Relevant Changes
+      id: changes
+      shell: pwsh
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $baseSha = $env:BASE_SHA
+        $headSha = $env:HEAD_SHA
+        $allZeroSha = "0000000000000000000000000000000000000000"
+
+        if ([string]::IsNullOrWhiteSpace($headSha)) {
+          $headSha = $env:GITHUB_SHA
+        }
+
+        $canCompare = -not [string]::IsNullOrWhiteSpace($baseSha) -and
+          $baseSha -ne $allZeroSha
+
+        if ($canCompare) {
+          & git cat-file -e "$baseSha^{commit}" 2>$null
+          $canCompare = $LASTEXITCODE -eq 0
+        }
+
+        if (-not $canCompare) {
+          Write-Host "A reliable base commit is unavailable; running the build for safety."
+          "requires_build=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          exit 0
+        }
+
+        $changedFiles = @(& git diff --name-only $baseSha $headSha --)
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to enumerate changed files between $baseSha and $headSha."
+        }
+
+        if ($changedFiles.Count -eq 0) {
+          Write-Host "No changed files were detected; running the build for safety."
+          "requires_build=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          exit 0
+        }
+
+        function Test-IgnoredNonRuntimePath([string]$path) {
+          $normalized = $path.Replace('\', '/')
+
+          if ($normalized -match '(?i)\.md$') { return $true }
+          if ($normalized -match '^(?i:docs|attachments|\.claude|\.agents)/') { return $true }
+          if ($normalized -match '^(?i:LICENSE)(?:\..*)?$') { return $true }
+          if ($normalized -match '^\.github/ISSUE_TEMPLATE/') { return $true }
+          if ($normalized -match '^\.github/workflows/') { return $true }
+          if ($normalized -match '^\.github/PULL_REQUEST_TEMPLATE(?:/|\.|$)') { return $true }
+
+          return $false
+        }
+
+        function Test-VersionOnlyProjectChange {
+          $projectPath = 'WinPieGestures/WinPieGestures.csproj'
+          $projectDiff = @(& git diff --unified=0 --no-ext-diff $baseSha $headSha -- $projectPath)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to inspect version changes in $projectPath."
+          }
+
+          $changedLines = @($projectDiff | Where-Object {
+            $_ -match '^[+-]' -and $_ -notmatch '^(\+\+\+|---)'
+          })
+          if ($changedLines.Count -eq 0) {
+            return $false
+          }
+
+          $nonVersionLines = @($changedLines | Where-Object {
+            $_ -notmatch '^[+-]\s*<(Version|AssemblyVersion|FileVersion)>[^<]*</\1>\s*$'
+          })
+          return $nonVersionLines.Count -eq 0
+        }
+
+        $requiresBuild = $false
+        $ignoredFiles = [System.Collections.Generic.List[string]]::new()
+        $buildFiles = [System.Collections.Generic.List[string]]::new()
+        $projectPath = 'WinPieGestures/WinPieGestures.csproj'
+        $versionOnlyProjectChange = $changedFiles -contains $projectPath -and
+          (Test-VersionOnlyProjectChange)
+
+        foreach ($file in $changedFiles) {
+          $normalized = $file.Replace('\', '/')
+          if ($normalized -eq $projectPath -and $versionOnlyProjectChange) {
+            $ignoredFiles.Add("$normalized (version fields only)")
+            continue
+          }
+          if (Test-IgnoredNonRuntimePath $normalized) {
+            $ignoredFiles.Add($normalized)
+            continue
+          }
+
+          $requiresBuild = $true
+          $buildFiles.Add($normalized)
+        }
+
+        $requiresBuildText = $requiresBuild.ToString().ToLowerInvariant()
+        "requires_build=$requiresBuildText" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+        "## Build change detection" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        "- Requires build: **$requiresBuildText**" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        "- Ignored files: $($ignoredFiles.Count)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        "- Build-relevant files: $($buildFiles.Count)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+        if ($ignoredFiles.Count -gt 0) {
+          Write-Host "Ignored non-runtime changes:"
+          $ignoredFiles | ForEach-Object { Write-Host "  - $_" }
+        }
+        if ($buildFiles.Count -gt 0) {
+          Write-Host "Build-relevant changes:"
+          $buildFiles | ForEach-Object { Write-Host "  - $_" }
+        }
+
+    - name: Skip Build for Non-Runtime Changes
+      if: steps.changes.outputs.requires_build != 'true'
+      shell: pwsh
+      run: Write-Host "Only documentation, development-assistant configuration, templates, assets, or version-only project metadata changed. Build skipped."
 
     - name: Setup .NET SDK 8.0
+      if: steps.changes.outputs.requires_build == 'true'
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
     - name: Restore Dependencies
+      if: steps.changes.outputs.requires_build == 'true'
       run: dotnet restore WinPieGestures/WinPieGestures.csproj
 
     - name: Build Solution (Release)
+      if: steps.changes.outputs.requires_build == 'true'
       run: dotnet build WinPieGestures/WinPieGestures.csproj -c Release --no-restore
 
     - name: Publish Standalone Binary
+      if: steps.changes.outputs.requires_build == 'true'
       run: dotnet publish WinPieGestures/WinPieGestures.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o bin/Standalone
 
     - name: Upload Build Artifacts
+      if: steps.changes.outputs.requires_build == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: StarPie-Standalone-win-x64
