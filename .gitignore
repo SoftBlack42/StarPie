@@ -36,6 +36,8 @@ windowsdesktop-runtime-*.exe
 *.tmp
 *.log
 *.old
+*.running
+*.running*
 .tolaria-rename-txn/
 
 # OS Specific
