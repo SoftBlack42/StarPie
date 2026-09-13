@@ -33,6 +33,7 @@ public partial class ScreenSnipWindow : Window
 	private bool _isSelecting;
 	private readonly Action<Bitmap?> _onCaptured;
 	private Bitmap? _fullScreenBmp;
+	private bool _resourcesReleased;
 
 	public ScreenSnipWindow(Action<Bitmap?> onCaptured)
 	{
@@ -201,19 +202,53 @@ public partial class ScreenSnipWindow : Window
 
 	private void CleanupAndClose(Bitmap? result)
 	{
+		ReleaseCaptureResources();
+
 		try
 		{
-			BackgroundImage.Source = null;
+			Close();
+			_onCaptured(result);
+		}
+		catch
+		{
+			// 回调未能接管选区位图时，由截屏窗口兜底释放。
+			result?.Dispose();
+			throw;
+		}
+	}
+
+	private void ReleaseCaptureResources()
+	{
+		if (_resourcesReleased)
+		{
+			return;
+		}
+
+		_resourcesReleased = true;
+
+		try { ReleaseMouseCapture(); } catch { }
+		try { BackgroundImage.Source = null; } catch { }
+
+		try
+		{
 			_fullScreenBmp?.Dispose();
-			_fullScreenBmp = null;
-			CutoutGeometry.Rect = Rect.Empty;
 		}
 		catch
 		{
 		}
+		finally
+		{
+			_fullScreenBmp = null;
+		}
 
-		Close();
-		_onCaptured?.Invoke(result);
+		try { CutoutGeometry.Rect = Rect.Empty; } catch { }
+	}
+
+	protected override void OnClosed(EventArgs e)
+	{
+		// Alt+F4、应用退出等非标准关闭路径同样必须释放全屏快照和 WPF 图像引用。
+		ReleaseCaptureResources();
+		base.OnClosed(e);
 	}
 
 	private static BitmapSource BitmapToBitmapSource(Bitmap bitmap)

@@ -73,11 +73,14 @@ public static class OcrManager
 		string recognizedText = "";
 		string engineName = "本地离线引擎";
 
-		// 尺寸与超分辨率自适应准备（防止 2600px 溢出崩溃，提升微小字号清晰度）
-		Bitmap workingBmp = PrepareBitmapForOcr(bmp);
+		Bitmap workingBmp = bmp;
 
 		try
 		{
+			// 尺寸与超分辨率自适应准备（防止 2600px 溢出崩溃，提升微小字号清晰度）
+			// 放在 try/finally 内，确保预处理自身失败时原始截图也能被释放。
+			workingBmp = PrepareBitmapForOcr(bmp);
+
 			string provider = config.Provider?.Trim() ?? "Local";
 			switch (provider)
 			{
@@ -218,7 +221,7 @@ public static class OcrManager
 			return "[提示]: 无法初始化本地 OCR 引擎。建议在 StarPie 动作设置中切换为 AI 视觉大模型 / 云端接口。";
 		}
 
-		SoftwareBitmap softwareBitmap = await ConvertToSoftwareBitmapAsync(bmp);
+		using SoftwareBitmap softwareBitmap = await ConvertToSoftwareBitmapAsync(bmp);
 		OcrResult result = await engine.RecognizeAsync(softwareBitmap);
 		if (result == null || result.Lines.Count == 0)
 		{
@@ -281,7 +284,7 @@ public static class OcrManager
 		}
 		request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
-		HttpResponseMessage response = await s_httpClient.SendAsync(request);
+		using HttpResponseMessage response = await s_httpClient.SendAsync(request);
 		string responseJson = await response.Content.ReadAsStringAsync();
 
 		if (!response.IsSuccessStatusCode)
@@ -316,7 +319,7 @@ public static class OcrManager
 			Content = new StringContent(JsonSerializer.Serialize(requestObj), Encoding.UTF8, "application/json")
 		};
 
-		HttpResponseMessage resp = await s_httpClient.SendAsync(req);
+		using HttpResponseMessage resp = await s_httpClient.SendAsync(req);
 		string resText = await resp.Content.ReadAsStringAsync();
 		if (!resp.IsSuccessStatusCode)
 		{
@@ -414,7 +417,7 @@ public static class OcrManager
 		bmp.Save(ms, ImageFormat.Bmp);
 		byte[] bytes = ms.ToArray();
 
-		InMemoryRandomAccessStream ras = new InMemoryRandomAccessStream();
+		using InMemoryRandomAccessStream ras = new InMemoryRandomAccessStream();
 		using (DataWriter writer = new DataWriter(ras))
 		{
 			writer.WriteBytes(bytes);
@@ -427,7 +430,6 @@ public static class OcrManager
 		BitmapDecoder decoder = await BitmapDecoder.CreateAsync(ras);
 		// 强制忽略 Alpha 通道，保证图像为 100% 不透明实色 RGB，OCR 引擎绝无黑屏风险
 		SoftwareBitmap softwareBitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore);
-		ras.Dispose();
 		return softwareBitmap;
 	}
 

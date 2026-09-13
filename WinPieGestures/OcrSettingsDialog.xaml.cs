@@ -137,7 +137,7 @@ public partial class OcrSettingsDialog : Window
 				{
 					client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AiApiKeyBox.Password.Trim());
 				}
-				HttpResponseMessage resp = await client.GetAsync(ep.TrimEnd('/') + "/models");
+				using HttpResponseMessage resp = await client.GetAsync(ep.TrimEnd('/') + "/models");
 				if (resp.IsSuccessStatusCode || (int)resp.StatusCode == 401 || (int)resp.StatusCode == 400)
 				{
 					TestResultLabel.Text = $"✓ 接口端点连通正常 (HTTP {(int)resp.StatusCode})";
@@ -153,7 +153,7 @@ public partial class OcrSettingsDialog : Window
 			{
 				string url = CustomHttpUrlTextBox.Text.Trim();
 				using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-				HttpResponseMessage resp = await client.GetAsync(url);
+				using HttpResponseMessage resp = await client.GetAsync(url);
 				TestResultLabel.Text = $"✓ 微服务已连通 (HTTP {(int)resp.StatusCode})";
 				TestResultLabel.Foreground = System.Windows.Media.Brushes.LightGreen;
 			}
