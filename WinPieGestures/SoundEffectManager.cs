@@ -307,21 +307,28 @@ public static class SoundEffectManager
 	/// </summary>
 	public static void Shutdown()
 	{
-		_isRunning = false;
-		try
-		{
-			_soundSignal.Set();
-		}
-		catch
-		{
-		}
+		Thread? workerThread;
 		lock (_syncLock)
 		{
+			_isRunning = false;
+			workerThread = _workerThread;
+			_workerThread = null;
 			_soundBuffers.Clear();
 			_initialized = false;
 		}
-	}
 
+		lock (_queueLock)
+		{
+			_pendingSound = null;
+			_pendingCustomWav = null;
+		}
+
+		try { _soundSignal.Set(); } catch { }
+		if (workerThread != null && workerThread.ManagedThreadId != Environment.CurrentManagedThreadId)
+		{
+			try { workerThread.Join(TimeSpan.FromMilliseconds(500)); } catch { }
+		}
+	}
 	#region 程序化波形合成引擎 (Procedural Sound Synthesizer)
 
 	/// <summary>

@@ -1020,7 +1020,11 @@ public partial class SettingsWindow : Window
 				CustomSoundStudioBorder.Visibility = (!isSimpleMode && string.Equals(theme, "Custom", StringComparison.OrdinalIgnoreCase)) ? Visibility.Visible : Visibility.Collapsed;
 			}
 		}
-		InitCustomSoundStudio();
+		// 调音台包含大量动态 WPF 控件，仅在当前确实展示时按需构建。
+		if (CustomSoundStudioBorder?.Visibility == Visibility.Visible)
+		{
+			InitCustomSoundStudio();
+		}
 		if (SoundVolumeSlider != null)
 		{
 			SoundVolumeSlider.Value = Math.Round(ConfigManager.CurrentConfig.SoundVolume * 100.0);
@@ -9768,6 +9772,10 @@ public partial class SettingsWindow : Window
 				SoundEffectManager.Initialize(ConfigManager.CurrentConfig.SoundTheme, ConfigManager.CurrentConfig.SoundVolume);
 				SoundEffectManager.PlayPreview(SoundType.SectorHover);
 			}
+			else
+			{
+				SoundEffectManager.Shutdown();
+			}
 			SyncUiToConfigAndSave();
 		}
 	}
@@ -9779,12 +9787,20 @@ public partial class SettingsWindow : Window
 			string theme = item.Tag?.ToString() ?? "Mechanical";
 			ConfigManager.CurrentConfig.SoundTheme = theme;
 			bool isSimpleMode = string.Equals(ConfigManager.CurrentConfig.ConfigMode, "Simple", StringComparison.OrdinalIgnoreCase);
+			bool showCustomStudio = !isSimpleMode && string.Equals(theme, "Custom", StringComparison.OrdinalIgnoreCase);
 			if (CustomSoundStudioBorder != null)
 			{
-				CustomSoundStudioBorder.Visibility = (!isSimpleMode && string.Equals(theme, "Custom", StringComparison.OrdinalIgnoreCase)) ? Visibility.Visible : Visibility.Collapsed;
+				CustomSoundStudioBorder.Visibility = showCustomStudio ? Visibility.Visible : Visibility.Collapsed;
 			}
-			SoundEffectManager.Initialize(theme, ConfigManager.CurrentConfig.SoundVolume);
-			SoundEffectManager.PlayPreview(SoundType.SectorHover);
+			if (showCustomStudio)
+			{
+				InitCustomSoundStudio();
+			}
+			if (ConfigManager.CurrentConfig.EnableSoundEffects)
+			{
+				SoundEffectManager.Initialize(theme, ConfigManager.CurrentConfig.SoundVolume);
+				SoundEffectManager.PlayPreview(SoundType.SectorHover);
+			}
 			SyncUiToConfigAndSave();
 		}
 	}
@@ -9801,14 +9817,17 @@ public partial class SettingsWindow : Window
 		{
 			double vol = Math.Clamp(e.NewValue / 100.0, 0.0, 1.0);
 			ConfigManager.CurrentConfig.SoundVolume = vol;
-			SoundEffectManager.Initialize(ConfigManager.CurrentConfig.SoundTheme, vol);
-
-			// 滑动音量时节流试听反馈（每 120ms 最多一次），给用户即时响度感知
-			long now = Environment.TickCount64;
-			if (now - _lastVolumePreviewTick >= 120L)
+			if (ConfigManager.CurrentConfig.EnableSoundEffects)
 			{
-				_lastVolumePreviewTick = now;
-				SoundEffectManager.PlayPreview(SoundType.SectorHover);
+				SoundEffectManager.Initialize(ConfigManager.CurrentConfig.SoundTheme, vol);
+
+				// 滑动音量时节流试听反馈（每 120ms 最多一次），给用户即时响度感知
+				long now = Environment.TickCount64;
+				if (now - _lastVolumePreviewTick >= 120L)
+				{
+					_lastVolumePreviewTick = now;
+					SoundEffectManager.PlayPreview(SoundType.SectorHover);
+				}
 			}
 
 			ScheduleAutoSave();

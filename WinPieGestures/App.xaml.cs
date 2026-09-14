@@ -160,8 +160,15 @@ public partial class App : Application
 		{
 			ConfigManager.LoadConfig();
 			AppLogger.LogInfo("ConfigManager.LoadConfig completed");
-			SoundEffectManager.Initialize();
-			AppLogger.LogInfo("SoundEffectManager.Initialize completed");
+			if (ConfigManager.CurrentConfig?.EnableSoundEffects == true)
+			{
+				SoundEffectManager.Initialize();
+				AppLogger.LogInfo("SoundEffectManager.Initialize completed");
+			}
+			else
+			{
+				AppLogger.LogInfo("SoundEffectManager initialization deferred because sound effects are disabled");
+			}
 			MainMouseHook = new MouseHook();
 			MainMouseHook.Start();
 			AppLogger.LogInfo("MainMouseHook started");
