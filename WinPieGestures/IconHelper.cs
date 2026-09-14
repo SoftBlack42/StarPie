@@ -871,45 +871,65 @@ public static class IconHelper
 	/// </summary>
 	public static void PinIconsForConfig(AppConfig? config)
 	{
-		if (config?.Profiles == null) return;
-		try
+		HashSet<string> requiredPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		if (config?.Profiles != null)
 		{
 			foreach (var profile in config.Profiles)
 			{
 				if (profile?.Actions == null) continue;
-				PinActionsList(profile.Actions);
+				CollectPinnedIconPaths(profile.Actions, requiredPaths);
 				if (profile.Layers != null)
 				{
 					foreach (var layer in profile.Layers)
 					{
-						if (layer?.Actions != null) PinActionsList(layer.Actions);
+						if (layer?.Actions != null)
+						{
+							CollectPinnedIconPaths(layer.Actions, requiredPaths);
+						}
 					}
 				}
 			}
 		}
-		catch (Exception ex)
+
+		// 与当前配置做差量同步：保留仍在使用的图标，解除废弃图标的静态强引用。
+		foreach (string cachedPath in _pinnedIcons.Keys)
 		{
-			AppLogger.LogError("Failed to pin active profile icons", ex);
+			if (!requiredPaths.Contains(cachedPath))
+			{
+				_pinnedIcons.TryRemove(cachedPath, out _);
+			}
+		}
+
+		foreach (string requiredPath in requiredPaths)
+		{
+			PinIcon(requiredPath);
 		}
 	}
 
-	private static void PinActionsList(IEnumerable<ActionItem> actions)
+	private static void CollectPinnedIconPaths(IEnumerable<ActionItem> actions, ISet<string> paths)
 	{
-		foreach (var a in actions)
+		foreach (var action in actions)
 		{
-			if (a == null) continue;
-			if (!string.IsNullOrWhiteSpace(a.InheritAppIconPath))
+			if (action == null) continue;
+			AddPinnedIconPath(paths, action.InheritAppIconPath);
+			if (string.Equals(action.Type, "Launch", StringComparison.OrdinalIgnoreCase))
 			{
-				PinIcon(a.InheritAppIconPath);
+				AddPinnedIconPath(paths, action.Parameter);
 			}
-			if (string.Equals(a.Type, "Launch", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(a.Parameter))
+			if (action.SubActions != null && action.SubActions.Count > 0)
 			{
-				PinIcon(a.Parameter);
+				CollectPinnedIconPaths(action.SubActions, paths);
 			}
-			if (a.SubActions != null && a.SubActions.Count > 0)
-			{
-				PinActionsList(a.SubActions);
-			}
+		}
+	}
+
+	private static void AddPinnedIconPath(ISet<string> paths, string? path)
+	{
+		if (string.IsNullOrWhiteSpace(path)) return;
+		string cleanPath = path.Trim().Trim('"');
+		if (cleanPath.Length > 0)
+		{
+			paths.Add(cleanPath);
 		}
 	}
 
