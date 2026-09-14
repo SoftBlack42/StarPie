@@ -1,15 +1,22 @@
 name: Build and Test
 
 on:
-  push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-and-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build & Verify StarPie
     runs-on: windows-latest
+    timeout-minutes: 10
 
     steps:
     - name: Checkout Repository
@@ -142,21 +149,6 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
-    - name: Restore Dependencies
-      if: steps.changes.outputs.requires_build == 'true'
-      run: dotnet restore WinPieGestures/WinPieGestures.csproj
-
     - name: Build Solution (Release)
       if: steps.changes.outputs.requires_build == 'true'
-      run: dotnet build WinPieGestures/WinPieGestures.csproj -c Release --no-restore
-
-    - name: Publish Standalone Binary
-      if: steps.changes.outputs.requires_build == 'true'
-      run: dotnet publish WinPieGestures/WinPieGestures.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o bin/Standalone
-
-    - name: Upload Build Artifacts
-      if: steps.changes.outputs.requires_build == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: StarPie-Standalone-win-x64
-        path: bin/Standalone/StarPie.exe
+      run: dotnet build WinPieGestures/WinPieGestures.csproj -c Release --nologo
