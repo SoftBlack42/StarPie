@@ -136,7 +136,7 @@ public partial class App : Application
 			}
 		}
 		base.OnStartup(e);
-		AppLogger.LogInfo($"=== StarPie v1.7.3-beta.5 Starting (OS: {Environment.OSVersion}, .NET: {Environment.Version}, 64bit: {Environment.Is64BitProcess}, Elevated: {ConfigManager.IsElevated()}) ===");
+		AppLogger.LogInfo($"=== StarPie v1.7.3-perf.1 Starting (OS: {Environment.OSVersion}, .NET: {Environment.Version}, 64bit: {Environment.Is64BitProcess}, Elevated: {ConfigManager.IsElevated()}) ===");
 		base.DispatcherUnhandledException += new DispatcherUnhandledExceptionEventHandler(App_DispatcherUnhandledException);
 		AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 		try
@@ -218,11 +218,12 @@ public partial class App : Application
 
 		if (MainSettingsWindow == null)
 		{
+			var __openSw = System.Diagnostics.Stopwatch.StartNew();
 			SettingsWindow window = new SettingsWindow();
 			window.Closed += SettingsWindow_Closed;
 			MainSettingsWindow = window;
 			Application.Current.MainWindow = window;
-			AppLogger.LogInfo("SettingsWindow created on demand");
+			AppLogger.LogInfo($"SettingsWindow created on demand (ctor total: {__openSw.ElapsedMilliseconds}ms)");
 		}
 
 		MainSettingsWindow.ShowSettings(tabIndex);

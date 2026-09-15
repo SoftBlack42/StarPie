@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
@@ -14,11 +15,18 @@
     <Product>StarPie</Product>
     <Company>StarPie Studio</Company>
     <Description>StarPie - 现代化高颜值 Windows 鼠标轮盘笔势与效率管理系统</Description>
-    <Version>1.7.3-beta.5</Version>
+    <Version>1.7.3-perf.1</Version>
     <AssemblyVersion>1.7.3.0</AssemblyVersion>
     <FileVersion>1.7.3.0</FileVersion>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <!-- 启动与首唤性能：R2R 预编译消除首次 JIT 停顿（发布时需 -r win-x64） -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
+    <!-- WPF 绑定引擎（BindingExpression.GetCulture → XmlLanguage.GetSpecificCulture）对未显式设置 Language 的元素
+         硬编码回退到 "en-us" 并构造具体 CultureInfo，在 InvariantGlobalization 下必然抛
+         InvalidOperationException 导致控制台窗口 Show 崩溃。故必须保留 ICU 真实文化数据；四语系 UI 字典仍由 I18n 自管。 -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

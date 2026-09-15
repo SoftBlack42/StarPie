@@ -397,6 +397,9 @@ public partial class SettingsWindow : Window
 
 	private static int _lastSelectedTabIndex;
 
+	/// <summary>Loaded 延迟初始化完成前暂存的请求页签（-1 = 无请求）。供 ShowSettings 在初始化前调用后于 Loaded 消费。</summary>
+	private int _pendingTabRequest = -1;
+
 	private DispatcherTimer? _deferredCloseTimer;
 
 	private bool _isClosingForRelease;
@@ -427,10 +430,9 @@ public partial class SettingsWindow : Window
 		if (_isUiInitialized || _isUiInitializing)
 		{
 			return;
-		}
-		_isUiInitializing = true;
-		_isUpdatingUi = true;
-		_isUpdatingFocusUi = true;
+		}			_isUiInitializing = true;
+			_isUpdatingUi = true;
+			_isUpdatingFocusUi = true;
 		try
 		{
 			// 自愈受损的槽位动作（继承图标存在有效程序路径，但动作类型被误改写为 Tile / 2L）
@@ -516,7 +518,7 @@ public partial class SettingsWindow : Window
 		catch
 		{
 		}
-		string text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5");
+		string text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-perf.1");
 		if (SidebarVersionText != null)
 		{
 			SidebarVersionText.Text = text;
@@ -550,23 +552,41 @@ public partial class SettingsWindow : Window
 		_isUpdatingUi = false;
 
 		// 若为桌面正常呼起或单测环境（非静默参数），立即就绪完整 UI；若为开机自启/静默启动，延迟至首次唤起加载
-		if (!IsSilentLaunch())
-		{
-			EnsureUiInitialized();
-		}
+		// 数据绑定初始化统一延迟至 Loaded/首次显示之后执行（实测占打开耗时 ~773ms）：
+		// 构造函数只完成视觉树构建，让窗口能尽快 Show 出外壳，避免用户点击后近 2 秒无响应。
+		// （静默启动路径原本就延迟加载，此改动使普通启动路径同样受益）
 
+		base.ContentRendered += delegate
+		{
+			// 关键：先让窗口空壳完成首帧上屏，再把重量级数据初始化（实测约 0.8s）
+			// 排到渲染队列之后（ApplicationIdle）。用户先看到完整骨架，内容随后就绪。
+			Dispatcher.BeginInvoke(new Action(() =>
+			{
+				if (_isUiInitialized && _pendingTabRequest < 0)
+				{
+					return;
+				}
+				EnsureUiInitialized();
+				if (_pendingTabRequest >= 0)
+				{
+					int pendingTab = _pendingTabRequest;
+					_pendingTabRequest = -1;
+					SwitchToTab(pendingTab);
+				}
+				ApplySidebarLayout();
+				UpdateSidebarThemeVisualState(ConfigManager.CurrentConfig?.AppTheme ?? "System");
+				bool isDark = IsCurrentThemeDark();
+				UpdateLogoTheme(isDark);
+				App.ApplyTrayTheme(isDark);
+				if (AppearanceSettingsGrid.Visibility == Visibility.Visible)
+				{
+					RenderLiveWheelPreview();
+				}
+			}), DispatcherPriority.ApplicationIdle);
+		};
 		base.Loaded += delegate
 		{
-			EnsureUiInitialized();
-			ApplySidebarLayout();
-			UpdateSidebarThemeVisualState(ConfigManager.CurrentConfig?.AppTheme ?? "System");
-			bool isDark = IsCurrentThemeDark();
-			UpdateLogoTheme(isDark);
-			App.ApplyTrayTheme(isDark);
-			if (AppearanceSettingsGrid.Visibility == Visibility.Visible)
-			{
-				RenderLiveWheelPreview();
-			}
+			// 轻量即时项：无重量级数据依赖的工作保留在 Loaded 同步完成
 			MemoryOptimizer.TrimMemory();
 			LoadContributorsOffline();
 			if (ConfigManager.CurrentConfig?.AutoCheckUpdate == true)
@@ -1465,7 +1485,7 @@ public partial class SettingsWindow : Window
 		string lastCheck = string.IsNullOrEmpty(ConfigManager.CurrentConfig.LastCheckUpdateTime) ? "未检查" : ConfigManager.CurrentConfig.LastCheckUpdateTime;
 		if (UpdateStatusDescText != null)
 		{
-			UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5"} (64位)。上次检查: {lastCheck}";
+			UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-perf.1"} (64位)。上次检查: {lastCheck}";
 		}
 		UpdateOcrBadgeUi();
 		UpdateRollbackBadgeAndCandidates();
@@ -2410,8 +2430,17 @@ public partial class SettingsWindow : Window
 			return;
 		}
 		CancelDeferredClose();
-		EnsureUiInitialized();
-		SwitchToTab(tabIndex >= 0 ? tabIndex : _lastSelectedTabIndex);
+		if (!_isUiInitialized && !_isUiInitializing)
+		{
+			// 首次打开：Shell 必须立刻可见。数据绑定初始化（实测约 0.8s）交给 Loaded 处理，
+			// 窗口先显示侧边栏骨架与默认页签，请求页签暂存待 Loaded 消费。
+			_pendingTabRequest = tabIndex >= 0 ? tabIndex : _lastSelectedTabIndex;
+		}
+		else
+		{
+			EnsureUiInitialized();
+			SwitchToTab(tabIndex >= 0 ? tabIndex : _lastSelectedTabIndex);
+		}
 		BeginAnimation(UIElement.OpacityProperty, null);
 		base.Opacity = 1.0;
 		ShowInTaskbar = true;
@@ -8304,11 +8333,14 @@ public partial class SettingsWindow : Window
 		{
 			return;
 		}
+		// MouseHook 复用同一 args 实例派发，严禁跨线程持有：先拷贝原始值再入 Dispatcher 队列
+		string mouseButton = e.MouseButton;
+		uint mouseData = e.MouseData;
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 		{
 			if (!_resourcesReleased)
 			{
-				ProcessRawMouseButton(e.MouseButton, e.MouseData);
+				ProcessRawMouseButton(mouseButton, mouseData);
 			}
 		}, Array.Empty<object>());
 	}
@@ -10515,26 +10547,53 @@ public partial class SettingsWindow : Window
 
 	private static string GetFontDisplayName(System.Windows.Media.FontFamily font)
 	{
+		return GetFontDisplayNameCultureSafe(font, out _);
+	}
+
+	[DllImport("kernel32.dll", SetLastError = false)]
+	private static extern ushort NativeUILanguage();
+
+	private static string GetFontDisplayNameCultureSafe(System.Windows.Media.FontFamily font, out bool usedFallback)
+	{
+		usedFallback = false;
 		try
 		{
-			XmlLanguage language = XmlLanguage.GetLanguage(CultureInfo.CurrentUICulture.IetfLanguageTag);
+			// InvariantGlobalization 模式下 CurrentUICulture/IetfLanguageTag 会引发
+			// 这里改为优先使用 Win32 原生 UI 语言决定字体显示语言
+			string tag;
+			try
+			{
+				ushort langId = NativeUILanguage();
+				tag = new System.Globalization.CultureInfo(langId).IetfLanguageTag;
+			}
+			catch
+			{
+				tag = "en-US";
+			}
+			System.Windows.Markup.XmlLanguage language = System.Windows.Markup.XmlLanguage.GetLanguage(tag);
 			if (font.FamilyNames.ContainsKey(language))
 			{
 				return font.FamilyNames[language];
 			}
-			XmlLanguage language2 = XmlLanguage.GetLanguage("en-US");
-			if (font.FamilyNames.ContainsKey(language2))
-			{
-				return font.FamilyNames[language2];
-			}
-			return font.FamilyNames.Values.FirstOrDefault() ?? font.Source;
 		}
 		catch
 		{
-			return font.Source;
 		}
-	}
 
+		try
+		{
+			if (font.FamilyNames.ContainsKey(System.Windows.Markup.XmlLanguage.GetLanguage("en-US")))
+			{
+				return font.FamilyNames[System.Windows.Markup.XmlLanguage.GetLanguage("en-US")];
+			}
+		}
+		catch
+		{
+		}
+
+		usedFallback = true;
+		return font.FamilyNames.Values.FirstOrDefault() ?? font.Source;
+	}
 	private void WheelFontFamilyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
 	{
 		if (_isUpdatingUi || WheelFontFamilyComboBox == null || ConfigManager.CurrentConfig == null || WheelFontFamilyComboBox.SelectedItem is not ComboBoxItem { Tag: var tag })
@@ -12837,7 +12896,7 @@ public partial class SettingsWindow : Window
 				}
 				if (UpdateStatusDescText != null)
 				{
-					UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-beta.5"} (64位)。线上最新版本: {rel.TagName}。上次检查: {ConfigManager.CurrentConfig?.LastCheckUpdateTime}";
+					UpdateStatusDescText.Text = $"当前运行版本: StarPie v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.7.3-perf.1"} (64位)。线上最新版本: {rel.TagName}。上次检查: {ConfigManager.CurrentConfig?.LastCheckUpdateTime}";
 				}
 				if (UpdateNewVersionPanel != null)
 				{
@@ -13283,7 +13342,7 @@ public partial class SettingsWindow : Window
 		try
 		{
 			using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-			client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("StarPie-Desktop", "1.7.3-beta.5"));
+			client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("StarPie-Desktop", "1.7.3-perf.1"));
 			client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
 
 			string json = await client.GetStringAsync("https://api.github.com/repos/SoftBlack42/StarPie/contributors");
@@ -15608,6 +15667,11 @@ public partial class SettingsWindow : Window
 		}
 	}
 
+	// 预览画布子轮盘光晕缓存：按配置修订号失效重建，鼠标悬停高亮零解析、零 Effect 实例化。
+	private long _previewSubGlowEffectRevision = -1L;
+
+	private System.Windows.Media.Effects.DropShadowEffect? _previewCachedSubGlowEffect;
+
 	private void ApplySubSectorGlow(System.Windows.Shapes.Path path, bool isHighlighted)
 	{
 		if (!isHighlighted)
@@ -15615,6 +15679,17 @@ public partial class SettingsWindow : Window
 			path.Effect = null;
 			return;
 		}
+		long revision = ConfigManager.ConfigurationRevision;
+		if (_previewSubGlowEffectRevision != revision)
+		{
+			_previewCachedSubGlowEffect = BuildPreviewSubGlowEffect();
+			_previewSubGlowEffectRevision = revision;
+		}
+		path.Effect = _previewCachedSubGlowEffect;
+	}
+
+	private System.Windows.Media.Effects.DropShadowEffect? BuildPreviewSubGlowEffect()
+	{
 		string text = ConfigManager.CurrentConfig?.SubWheelHighlightGlowPreset ?? "FollowPrimary";
 		if (text == "FollowPrimary")
 		{
@@ -15622,8 +15697,7 @@ public partial class SettingsWindow : Window
 		}
 		if (text == "None")
 		{
-			path.Effect = null;
-			return;
+			return null;
 		}
 		System.Windows.Media.Color color;
 		if (!(text == "Custom") || string.IsNullOrEmpty(ConfigManager.CurrentConfig?.SubWheelHighlightGlowColor))
@@ -15675,13 +15749,15 @@ public partial class SettingsWindow : Window
 			num2 = ((currentConfig4 != null && currentConfig4.HighlightGlowOpacity >= 0.0) ? ConfigManager.CurrentConfig.HighlightGlowOpacity : 0.85);
 		}
 		double opacity = num2;
-		path.Effect = new DropShadowEffect
+		System.Windows.Media.Effects.DropShadowEffect effect = new DropShadowEffect
 		{
 			Color = color,
 			BlurRadius = blurRadius,
 			ShadowDepth = 0.0,
 			Opacity = opacity
 		};
+		effect.Freeze();
+		return effect;
 	}
 
 	private void SubmenuStyleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

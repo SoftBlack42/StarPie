@@ -1,4 +1,4 @@
-﻿using System.Windows.Controls;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
@@ -27,12 +27,22 @@ public class GlassmorphismRenderer : BaseStyleRenderer
 		}
 	}
 
+	// 冻结复用的扇区/中心退出光晕 Effect：高亮切换只做引用赋值，零分配、零 GPU 资源重建。
+	private System.Windows.Media.Effects.DropShadowEffect? _sectorGlowEffect;
+
+	private System.Windows.Media.Effects.DropShadowEffect? _sectorIdleEffect;
+
+	private System.Windows.Media.Effects.DropShadowEffect? _exitGlowEffect;
+
 	protected override void PostInitialize()
 	{
 		base.BorderThickness = 0.9;
 		base.HighlightBorderThickness = 1.8;
 		base.CoreBgBrush = new SolidColorBrush(Color.FromArgb(60, 20, 24, 40));
 		base.CoreBorderBrush = new SolidColorBrush(Color.FromArgb(70, byte.MaxValue, byte.MaxValue, byte.MaxValue));
+		_sectorGlowEffect = CreateFrozenDropShadow(GetEffectiveGlowColor(), GetEffectiveGlowRadius(26.0), 0.0, GetEffectiveGlowOpacity(0.95));
+		_sectorIdleEffect = CreateFrozenDropShadow(Color.FromRgb(0, 0, 0), 14.0, 2.0, 0.4, 270.0);
+		_exitGlowEffect = CreateFrozenDropShadow(Color.FromRgb(244, 63, 94), 16.0, 0.0, 0.9);
 	}
 
 	public override void RenderDecorations(Canvas canvas, Grid coreGrid, double cx, double cy, double wheelRadius, double coreRadius, int insertIndex)
@@ -57,45 +67,16 @@ public class GlassmorphismRenderer : BaseStyleRenderer
 	{
 		if (isHighlighted)
 		{
-			Color effectiveGlowColor = GetEffectiveGlowColor();
-			double effectiveGlowRadius = GetEffectiveGlowRadius(26.0);
-			double effectiveGlowOpacity = GetEffectiveGlowOpacity(0.95);
-			path.Effect = new DropShadowEffect
-			{
-				Color = effectiveGlowColor,
-				BlurRadius = effectiveGlowRadius,
-				ShadowDepth = 0.0,
-				Opacity = effectiveGlowOpacity
-			};
+			path.Effect = _sectorGlowEffect;
 		}
 		else
 		{
-			path.Effect = new DropShadowEffect
-			{
-				Color = Color.FromRgb(0, 0, 0),
-				BlurRadius = 14.0,
-				ShadowDepth = 2.0,
-				Opacity = 0.4,
-				Direction = 270.0
-			};
+			path.Effect = _sectorIdleEffect;
 		}
 	}
 
 	public override void ApplyExitHighlight(Path exitIcon, bool isHighlighted)
 	{
-		if (isHighlighted)
-		{
-			exitIcon.Effect = new DropShadowEffect
-			{
-				Color = Color.FromRgb(244, 63, 94),
-				BlurRadius = 16.0,
-				ShadowDepth = 0.0,
-				Opacity = 0.9
-			};
-		}
-		else
-		{
-			exitIcon.Effect = null;
-		}
+		exitIcon.Effect = (isHighlighted ? _exitGlowEffect : null);
 	}
 }

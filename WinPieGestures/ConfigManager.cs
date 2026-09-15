@@ -107,9 +107,27 @@ public static class ConfigManager
 				CurrentConfig = JsonSerializer.Deserialize<AppConfig>(json, options) ?? CreateDefaultConfig();
 				EnsureConfigHealth(CurrentConfig);
 				AppLogger.LogInfo($"Loaded configuration from '{ConfigPath}'");
-				if (hasLegacyBase64)
+				// 延迟基线调优：实测旧默认 25px 时按下→呈现中位数约 74ms（程序侧仅约 7ms，其余为拖动越阈时间）。
+				// 仅迁移仍停留在历史默认值（25px 或调优期过渡值 15px）的配置；用户手动调过的值保持不变。
+				bool migratedThreshold = false;
+				if (Math.Abs(CurrentConfig.DragThreshold - 25.0) < 0.1)
+				{
+					CurrentConfig.DragThreshold = 18.0;
+					migratedThreshold = true;
+					AppLogger.LogInfo("Migrated DragThreshold from legacy default 25px to tuned default 18px (measured latency baseline).");
+				}
+				else if (Math.Abs(CurrentConfig.DragThreshold - 15.0) < 0.1)
+				{
+					CurrentConfig.DragThreshold = 18.0;
+					migratedThreshold = true;
+					AppLogger.LogInfo("Migrated DragThreshold from interim tuned default 15px to 18px (anti-misfire margin).");
+				}
+				if (hasLegacyBase64 || migratedThreshold)
 				{
 					SaveConfig();
+				}
+				if (hasLegacyBase64)
+				{
 					AppLogger.LogInfo("Automatically purged legacy Base64 embedded data from config file.");
 				}
 			}
@@ -435,7 +453,7 @@ public static class ConfigManager
 	{
 		AppConfig obj = new AppConfig
 		{
-			DragThreshold = 25.0
+			DragThreshold = 18.0
 		};
 		WheelProfile item = new WheelProfile
 		{

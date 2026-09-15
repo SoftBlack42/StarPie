@@ -1,4 +1,4 @@
-﻿using System.Windows.Controls;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
@@ -27,10 +27,14 @@ public class CleanSectorsRenderer : BaseStyleRenderer
 		}
 	}
 
+	// 冻结复用的高光光晕：高亮切换仅引用赋值，避免每次 new DropShadowEffect。
+	private System.Windows.Media.Effects.DropShadowEffect? _sectorGlowEffect;
+
 	protected override void PostInitialize()
 	{
 		base.BorderThickness = 0.9;
 		base.HighlightBorderThickness = 1.6;
+		_sectorGlowEffect = CreateFrozenDropShadow(GetEffectiveGlowColor(), GetEffectiveGlowRadius(16.0), 0.0, GetEffectiveGlowOpacity(0.7));
 	}
 
 	public override void RenderDecorations(Canvas canvas, Grid coreGrid, double cx, double cy, double wheelRadius, double coreRadius, int insertIndex)
@@ -39,22 +43,6 @@ public class CleanSectorsRenderer : BaseStyleRenderer
 
 	public override void ApplySectorHighlight(Path path, bool isHighlighted)
 	{
-		if (isHighlighted)
-		{
-			Color effectiveGlowColor = GetEffectiveGlowColor();
-			double effectiveGlowRadius = GetEffectiveGlowRadius(16.0);
-			double effectiveGlowOpacity = GetEffectiveGlowOpacity(0.7);
-			path.Effect = new DropShadowEffect
-			{
-				Color = effectiveGlowColor,
-				BlurRadius = effectiveGlowRadius,
-				ShadowDepth = 0.0,
-				Opacity = effectiveGlowOpacity
-			};
-		}
-		else
-		{
-			path.Effect = null;
-		}
+		path.Effect = (isHighlighted ? _sectorGlowEffect : null);
 	}
 }

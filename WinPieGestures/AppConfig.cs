@@ -12,7 +12,8 @@ public class AppConfig
 
 	public TriggerConfig Trigger { get; set; } = new TriggerConfig();
 
-	public double DragThreshold { get; set; } = 25.0;
+	/// <summary>轮盘唤出拖动触发距离（像素）。18px 为实测调优默认值：延迟基线测量显示旧默认 25px 的按下→呈现耗时中位数约 74ms，其中程序侧仅约 7ms，其余为拖动越过阈值的时间；18px 在显著降低唤出延迟的同时保留充分防抖余量，避免轻微手部漂移误触发。</summary>
+	public double DragThreshold { get; set; } = 18.0;
 
 	/// <summary>控制台配置模式："Simple"（简单轻量模式，隐藏低频高级微调）或 "Pro"（高级全量模式，开放全部配置）。</summary>
 	public string ConfigMode { get; set; } = "Simple";

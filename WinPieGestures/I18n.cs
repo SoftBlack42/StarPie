@@ -1,11 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace WinPieGestures;
 
 public static class I18n
 {
+	// InvariantGlobalization 模式下 CurrentUICulture.Name 恒为空串，
+	// 需要 Win32 原生 UI 语言作为 Auto 检测兜底。
+	[DllImport("kernel32.dll", SetLastError = false)]
+	private static extern ushort GetUserDefaultUILanguage();
+
 	private static LanguageCode _currentLanguage = LanguageCode.ZhCn;
 
 	private static readonly Dictionary<string, Dictionary<LanguageCode, string>> Translations;
@@ -40,16 +46,17 @@ public static class I18n
 	{
 		if (string.Equals(code, "Auto", StringComparison.OrdinalIgnoreCase))
 		{
-			string name = CultureInfo.CurrentUICulture.Name;
-			if (name.StartsWith("zh-TW", StringComparison.OrdinalIgnoreCase) || name.StartsWith("zh-HK", StringComparison.OrdinalIgnoreCase) || name.StartsWith("zh-MO", StringComparison.OrdinalIgnoreCase) || name.StartsWith("zh-Hant", StringComparison.OrdinalIgnoreCase))
+			// 直接用 Win32 LANGID 数值解码语言：普通与 InvariantGlobalization 模式下均准确可靠，
+			// 不经 CultureInfo 构造（不变模式下构造非 Invariant 文化会抛 CultureNotFoundException）。
+			ushort langId = GetUserDefaultUILanguage();
+			ushort primary = (ushort)(langId & 0x3FF);
+			ushort sublang = (ushort)(langId >> 10);
+			if (primary == 0x04)
 			{
-				CurrentLanguage = LanguageCode.ZhTw;
+				// 中文：简体子语言 (zh-CN 0x0804 / zh-SG 0x1004)，其余 (zh-TW/HK/MO/Hant) 归入繁体
+				CurrentLanguage = (sublang == 0x02 || sublang == 0x04) ? LanguageCode.ZhCn : LanguageCode.ZhTw;
 			}
-			else if (name.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
-			{
-				CurrentLanguage = LanguageCode.ZhCn;
-			}
-			else if (name.StartsWith("ja", StringComparison.OrdinalIgnoreCase))
+			else if (primary == 0x11)
 			{
 				CurrentLanguage = LanguageCode.Ja;
 			}

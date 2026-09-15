@@ -67,6 +67,20 @@ public class GestureController : IDisposable
 
 	private readonly List<(int dir, double len)> _gestureRuns = new List<(int, double)>();
 
+	// 图样/提示缓存：钩子线程每次移动采样都会调用 GetPreviewPattern/BuildGestureHint，
+	// 输入未变时直接复用上次结果，消除高频 List 迭代与字符串分配（每个手势可达上百次采样）。
+	private int _patternSourceRunCount = -1;
+
+	private int _patternSourcePendingDir = -2;
+
+	private double _patternSourcePendingLen = -1.0;
+
+	private string _cachedPattern = string.Empty;
+
+	private string _cachedHintPattern = string.Empty;
+
+	private string _cachedHint = string.Empty;
+
 	private int _gesturePendingDir = -1;
 
 	private double _gesturePendingLen;
@@ -1004,6 +1018,13 @@ public class GestureController : IDisposable
 	/// </summary>
 	private string GetPreviewPattern()
 	{
+		// 输入三元组（行程段数 + 当前未决方向/长度）未变时返回缓存图样，跳过整个构建
+		if (_gestureRuns.Count == _patternSourceRunCount
+			&& _gesturePendingDir == _patternSourcePendingDir
+			&& _gesturePendingLen.Equals(_patternSourcePendingLen))
+		{
+			return _cachedPattern;
+		}
 		double segMin = ConfigManager.CurrentConfig.GestureSegmentSensitivity > 6.0 ? ConfigManager.CurrentConfig.GestureSegmentSensitivity : 12.0;
 		List<(int dir, double len)> runs = new List<(int, double)>(_gestureRuns);
 		if (_gesturePendingDir >= 0 && _gesturePendingLen > 0.0)
@@ -1027,7 +1048,11 @@ public class GestureController : IDisposable
 				break;
 			}
 		}
-		return string.Join("-", dirs.Select(GestureDirCode));
+		_patternSourceRunCount = _gestureRuns.Count;
+		_patternSourcePendingDir = _gesturePendingDir;
+		_patternSourcePendingLen = _gesturePendingLen;
+		_cachedPattern = dirs.Count == 0 ? string.Empty : string.Join("-", dirs.Select(GestureDirCode));
+		return _cachedPattern;
 	}
 
 	/// <summary>图样 → 箭头文本（如 "D-R" → "↓→"）。</summary>
@@ -1047,6 +1072,11 @@ public class GestureController : IDisposable
 	/// <summary>提示文本：图样箭头 + 映射动作名/参数；未映射只显示图样。</summary>
 	private string BuildGestureHint(string pattern)
 	{
+		// 图样未变时复用上次提示文本（跳过映射表遍历与字符串拼接）
+		if (string.Equals(pattern, _cachedHintPattern, StringComparison.Ordinal))
+		{
+			return _cachedHint;
+		}
 		string glyph = GesturePatternGlyph(pattern);
 		ActionItem? a = FindGestureAction(pattern);
 		if (a == null)
@@ -1058,7 +1088,9 @@ public class GestureController : IDisposable
 		{
 			label = a.Type ?? "";
 		}
-		return string.IsNullOrEmpty(label) ? glyph : $"{glyph}  {label}";
+		_cachedHintPattern = pattern;
+		_cachedHint = string.IsNullOrEmpty(label) ? glyph : $"{glyph}  {label}";
+		return _cachedHint;
 	}
 
 	private void EndGesture(Point current)
@@ -1111,7 +1143,9 @@ public class GestureController : IDisposable
 	{
 		try
 		{
-			((DispatcherObject)Application.Current).Dispatcher.BeginInvoke(action, DispatcherPriority.Background);
+			// Input 优先级（高于 Background）：轨迹与提示更新必须在下一泵周期及时应用，
+			// 避免 Background 档被布局/渲染队列饿死导致的轨迹滞后感。
+			((DispatcherObject)Application.Current).Dispatcher.BeginInvoke(action, DispatcherPriority.Input);
 		}
 		catch
 		{
@@ -1872,11 +1906,10 @@ public class GestureController : IDisposable
 			lock (_uiUpdateSync)
 			{
 				if (!_isGestureActive || gestureVersion != _gestureVersion || !ReferenceEquals(_radialWindow, window))
-				{
-					window.Dismiss(gestureVersion);
-					return false;
-				}
+				{				window.Dismiss(gestureVersion);
+				return false;
 			}
+		}
 
 			Point actualCenter = window.ActualPhysicalCenter;
 			if (Math.Abs(actualCenter.X - _startPoint.X) > 1.0 || Math.Abs(actualCenter.Y - _startPoint.Y) > 1.0)

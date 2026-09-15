@@ -34,12 +34,22 @@ namespace WinPieGestures
             return false;
         }
 
+        // 冻结复用的光晕 Effect：高亮切换仅引用赋值，避免每次 new DropShadowEffect。
+        private System.Windows.Media.Effects.DropShadowEffect? _sectorGlowEffect;
+
+        private System.Windows.Media.Effects.DropShadowEffect? _sectorIdleEffect;
+
+        private System.Windows.Media.Effects.DropShadowEffect? _pawGlowEffect;
+
         protected override void PostInitialize()
         {
             BorderThickness = 1.4;
             HighlightBorderThickness = 2.2;
             CoreBgBrush = new SolidColorBrush(Color.FromRgb(255, 245, 247));
             CoreBorderBrush = new SolidColorBrush(Color.FromRgb(244, 114, 182));
+            _sectorGlowEffect = CreateFrozenDropShadow(GetEffectiveGlowColor(), GetEffectiveGlowRadius(18.0), 0.0, GetEffectiveGlowOpacity(0.85));
+            _sectorIdleEffect = CreateFrozenDropShadow(Color.FromRgb(244, 114, 182), 8.0, 1.0, 0.25);
+            _pawGlowEffect = CreateFrozenDropShadow(Color.FromRgb(244, 63, 94), 18.0, 0.0, 0.95);
         }
 
         public override void RenderDecorations(Canvas canvas, Grid coreGrid, double cx, double cy, double wheelRadius, double coreRadius, int insertIndex)
@@ -259,30 +269,7 @@ namespace WinPieGestures
 
         public override void ApplySectorHighlight(Path path, bool isHighlighted)
         {
-            if (isHighlighted)
-            {
-                Color glowColor = GetEffectiveGlowColor();
-                double blurRadius = GetEffectiveGlowRadius(18.0);
-                double opacity = GetEffectiveGlowOpacity(0.85);
-
-                path.Effect = new DropShadowEffect
-                {
-                    Color = glowColor,
-                    BlurRadius = blurRadius,
-                    ShadowDepth = 0,
-                    Opacity = opacity
-                };
-            }
-            else
-            {
-                path.Effect = new DropShadowEffect
-                {
-                    Color = Color.FromRgb(244, 114, 182),
-                    BlurRadius = 8,
-                    ShadowDepth = 1,
-                    Opacity = 0.25
-                };
-            }
+            path.Effect = (isHighlighted ? _sectorGlowEffect : _sectorIdleEffect);
         }
 
         public override void ApplyExitHighlight(Path exitIcon, bool isHighlighted)
@@ -293,20 +280,7 @@ namespace WinPieGestures
                 var pawGrid = grid.Children.OfType<Grid>().FirstOrDefault(g => g.Name == "DynamicPawGrid");
                 if (pawGrid != null)
                 {
-                    if (isHighlighted)
-                    {
-                        pawGrid.Effect = new DropShadowEffect
-                        {
-                            Color = Color.FromRgb(244, 63, 94),
-                            BlurRadius = 18,
-                            ShadowDepth = 0,
-                            Opacity = 0.95
-                        };
-                    }
-                    else
-                    {
-                        pawGrid.Effect = null;
-                    }
+                    pawGrid.Effect = (isHighlighted ? _pawGlowEffect : null);
                 }
             }
         }

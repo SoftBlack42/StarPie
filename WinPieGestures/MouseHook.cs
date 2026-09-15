@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -118,6 +119,20 @@ public class MouseHook
 	public event EventHandler<MouseEventArgs>? OnTriggerButtonDown;
 
 	public event EventHandler<MouseEventArgs>? OnTriggerButtonUp;
+
+	// 钩子回调线程专用复用实例：事件订阅方必须同步消费，严禁跨线程/异步持有（见各类 Update 注释）。
+	// 消除每秒数百次鼠标移动事件的堆分配，杜绝 Gen0 GC 抖动干扰手势丝滑度。
+	private readonly MouseEventArgs _moveArgs = new MouseEventArgs(0.0, 0.0);
+
+	private readonly MouseEventArgs _rawArgs = new MouseEventArgs(0.0, 0.0);
+
+	private readonly MouseEventArgs _triggerDownArgs = new MouseEventArgs(0.0, 0.0);
+
+	private readonly MouseEventArgs _triggerUpArgs = new MouseEventArgs(0.0, 0.0);
+
+	private readonly MouseWheelHookEventArgs _wheelArgs = new MouseWheelHookEventArgs(0, 0.0, 0.0);
+
+	private readonly RawMouseEventArgs _rawButtonArgs = new RawMouseEventArgs(0, "", 0u, false, 0.0, 0.0);
 
 	public event EventHandler<MouseEventArgs>? OnMouseMove;
 
@@ -350,7 +365,7 @@ public class MouseHook
 		return SetWindowsHookEx(14, proc, GetModuleHandle(processModule.ModuleName), 0u);
 	}
 
-	private nint HookCallback(int nCode, nint wParam, nint lParam)
+	private unsafe nint HookCallback(int nCode, nint wParam, nint lParam)
 	{
 		if (IsPaused)
 		{
@@ -358,7 +373,8 @@ public class MouseHook
 		}
 		if (nCode >= 0)
 		{
-			MSLLHOOKSTRUCT mSLLHOOKSTRUCT = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+			// 零拷贝读取：OS 提供的 MSLLHOOKSTRUCT 仅在回调期内有效，ref 直读免去 Marshal 序列化开销
+			ref MSLLHOOKSTRUCT mSLLHOOKSTRUCT = ref Unsafe.AsRef<MSLLHOOKSTRUCT>((void*)lParam);
 			if (mSLLHOOKSTRUCT.dwExtraInfo == StarPieExtraInfo)
 			{
 				// StarPie 自发模拟的鼠标事件直接快速放行，杜绝自身捕获与竞争
@@ -368,7 +384,8 @@ public class MouseHook
 			int num = (int)wParam;
 			if (num == 512)
 			{
-				MouseEventArgs e = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+				MouseEventArgs e = _moveArgs;
+				e.Update(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 				OnMouseMove?.Invoke(this, e);
 				if (e.Handled)
 				{
@@ -380,7 +397,8 @@ public class MouseHook
 			if (num == 522) // WM_MOUSEWHEEL
 			{
 				short delta = (short)((mSLLHOOKSTRUCT.mouseData >> 16) & 0xFFFF);
-				MouseWheelHookEventArgs wheelArgs = new MouseWheelHookEventArgs(delta, mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+				MouseWheelHookEventArgs wheelArgs = _wheelArgs;
+				wheelArgs.Update(delta, mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 				OnMouseWheel?.Invoke(this, wheelArgs);
 				if (wheelArgs.Handled)
 				{
@@ -389,7 +407,8 @@ public class MouseHook
 				return CallNextHookEx(_hookId, nCode, wParam, lParam);
 			}
 
-			MouseEventArgs e2 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+			MouseEventArgs e2 = _rawArgs;
+			e2.Update(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 			OnRawMouseEvent?.Invoke(this, e2);
 			string text = "";
 			bool flag = false;
@@ -423,7 +442,8 @@ public class MouseHook
 			}
 			if (!string.IsNullOrEmpty(text))
 			{
-				RawMouseEventArgs e3 = new RawMouseEventArgs(num, text, mSLLHOOKSTRUCT.mouseData, flag, mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+				RawMouseEventArgs e3 = _rawButtonArgs;
+				e3.Update(num, text, mSLLHOOKSTRUCT.mouseData, flag, mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 				OnRawMouseButtonEvent?.Invoke(this, e3);
 				if (e3.Handled)
 				{
@@ -439,7 +459,8 @@ public class MouseHook
 				bool flag3 = flag2 && string.Equals(text, text2, StringComparison.OrdinalIgnoreCase);
 				if (num2)
 				{
-					MouseEventArgs e4 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+					MouseEventArgs e4 = _triggerDownArgs;
+					e4.Update(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 					OnTriggerButtonDown?.Invoke(this, e4);
 					if (e4.Handled)
 					{
@@ -448,7 +469,8 @@ public class MouseHook
 				}
 				else if (flag3)
 				{
-					MouseEventArgs e5 = new MouseEventArgs(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
+					MouseEventArgs e5 = _triggerUpArgs;
+					e5.Update(mSLLHOOKSTRUCT.pt.x, mSLLHOOKSTRUCT.pt.y);
 					OnTriggerButtonUp?.Invoke(this, e5);
 					if (e5.Handled)
 					{

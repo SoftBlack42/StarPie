@@ -127,8 +127,22 @@ public abstract class BaseStyleRenderer : IRadialStyleRenderer
 			CoreBgBrush = CreateSolidBrush("#F018181B");
 			CoreBorderBrush = CreateSolidBrush("#30FFFFFF");
 		}
+		// 预解析高光光晕颜色：扇区高亮是最高频路径，杜绝每次切换都 ColorConverter.ConvertFromString。
+		_glowColorOverride = null;
+		if (_config != null && !string.IsNullOrEmpty(_config.HighlightGlowColor))
+		{
+			try
+			{
+				_glowColorOverride = (Color)ColorConverter.ConvertFromString(_config.HighlightGlowColor);
+			}
+			catch
+			{
+			}
+		}
 		PostInitialize();
 	}
+
+	private Color? _glowColorOverride;
 
 	protected SolidColorBrush CreateSolidBrush(string hex)
 	{
@@ -153,17 +167,33 @@ public abstract class BaseStyleRenderer : IRadialStyleRenderer
 	{
 	}
 
+	/// <summary>
+	/// 构建一次性冻结的 DropShadowEffect 供扇区高亮复用。冻结后的 Freezable 可被多个扇区 Path
+	/// 安全共享（只读），彻底消除"每次扇区切换 new Effect"造成的 GPU 资源重建与 Gen0 GC 抖动。
+	/// </summary>
+	protected static System.Windows.Media.Effects.DropShadowEffect CreateFrozenDropShadow(
+		Color color, double blurRadius, double shadowDepth, double opacity, double? direction = null)
+	{
+		System.Windows.Media.Effects.DropShadowEffect effect = new System.Windows.Media.Effects.DropShadowEffect
+		{
+			Color = color,
+			BlurRadius = blurRadius,
+			ShadowDepth = shadowDepth,
+			Opacity = opacity
+		};
+		if (direction.HasValue)
+		{
+			effect.Direction = direction.Value;
+		}
+		effect.Freeze();
+		return effect;
+	}
+
 	public virtual Color GetEffectiveGlowColor()
 	{
-		if (_config != null && !string.IsNullOrEmpty(_config.HighlightGlowColor))
+		if (_glowColorOverride.HasValue)
 		{
-			try
-			{
-				return (Color)ColorConverter.ConvertFromString(_config.HighlightGlowColor);
-			}
-			catch
-			{
-			}
+			return _glowColorOverride.Value;
 		}
 		if (HighlightBorderBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush)
 		{

@@ -298,18 +298,26 @@ public partial class RadialWindow : Window
 
 		public List<double> Angles { get; }
 
+		public List<TextBlock?> Texts { get; }
+
+		public List<System.Windows.Shapes.Path?> IconPaths { get; }
+
 		public SubTierVisuals(
 			List<System.Windows.Shapes.Path> paths,
 			List<Grid> containers,
 			List<TranslateTransform> pathTransforms,
 			List<TranslateTransform> containerTransforms,
-			List<double> angles)
+			List<double> angles,
+			List<TextBlock?> texts,
+			List<System.Windows.Shapes.Path?> iconPaths)
 		{
 			Paths = paths;
 			Containers = containers;
 			PathTransforms = pathTransforms;
 			ContainerTransforms = containerTransforms;
 			Angles = angles;
+			Texts = texts;
+			IconPaths = iconPaths;
 		}
 	}
 
@@ -326,6 +334,15 @@ public partial class RadialWindow : Window
 	private readonly List<System.Windows.Shapes.Path> _sectorPaths;
 
 	private readonly List<StackPanel> _contentPanels;
+
+	// 内容元素直取缓存：构建时记录文本 TextBlock 与图标 Path，高亮切换不再对视觉树做 OfType 线性扫描
+	private readonly List<TextBlock?> _contentTextBlocks = new List<TextBlock?>();
+
+	private readonly List<System.Windows.Shapes.Path?> _contentIconElements = new List<System.Windows.Shapes.Path?>();
+
+	private readonly List<TextBlock?> _subTextBlocks = new List<TextBlock?>();
+
+	private readonly List<System.Windows.Shapes.Path?> _subIconElements = new List<System.Windows.Shapes.Path?>();
 
 	private readonly List<TranslateTransform> _sectorTransforms;
 
@@ -694,8 +711,8 @@ public partial class RadialWindow : Window
 		_currentHighlightedSubSector = -1;
 		_activeSubTierParentSector = -1;
 		_isOuterEscaped = false;
-		_subTierCache.Clear();
-		ClearSubTier();
+		// 子环视觉跨手势常驻复用：只隐藏回落，不清缓存（配置重建时才由 ClearRenderedVisualsForRebuild 真正清除）
+		ResetSubTierVisuals();
 		CoreScale.ScaleX = 1.0;
 		CoreScale.ScaleY = 1.0;
 		CoreVolumeText.Visibility = Visibility.Collapsed;
@@ -747,9 +764,8 @@ public partial class RadialWindow : Window
 			}
 			if (i < _contentPanels.Count)
 			{
-				StackPanel panel = _contentPanels[i];
-				TextBlock? text = panel.Children.OfType<TextBlock>().FirstOrDefault();
-				System.Windows.Shapes.Path? icon = panel.Children.OfType<System.Windows.Shapes.Path>().FirstOrDefault();
+				TextBlock? text = ((i < _contentTextBlocks.Count) ? _contentTextBlocks[i] : null);
+				System.Windows.Shapes.Path? icon = ((i < _contentIconElements.Count) ? _contentIconElements[i] : null);
 				if (text != null)
 				{
 					text.Foreground = _textColorBrush;
@@ -788,6 +804,8 @@ public partial class RadialWindow : Window
 		}
 		_sectorPaths.Clear();
 		_contentPanels.Clear();
+		_contentTextBlocks.Clear();
+		_contentIconElements.Clear();
 		_sectorTransforms.Clear();
 		_containerTransforms.Clear();
 		_sectorAngles.Clear();
@@ -1610,6 +1628,8 @@ public partial class RadialWindow : Window
 		bool flag = ConfigManager.CurrentConfig.ShowText && text != "IconOnly";
 		_sectorPaths.Clear();
 		_contentPanels.Clear();
+		_contentTextBlocks.Clear();
+		_contentIconElements.Clear();
 		_sectorTransforms.Clear();
 		_containerTransforms.Clear();
 		_sectorAngles.Clear();
@@ -1972,6 +1992,8 @@ public partial class RadialWindow : Window
 			Panel.SetZIndex(grid, 10);
 			WheelCanvas.Children.Add(grid);
 			_contentPanels.Add(stackPanel);
+			_contentTextBlocks.Add(textElement);
+			_contentIconElements.Add(frameworkElement2 as System.Windows.Shapes.Path);
 			_containerTransforms.Add(translateTransform2);
 		}
 	}
@@ -2072,21 +2094,60 @@ public partial class RadialWindow : Window
 		}
 	}
 
+	// 冻结复用的外甩淡入/淡出动画：状态切换零分配。
+	private static readonly DoubleAnimation _escapeDimAnimation = CreateEscapeFadeAnimation(0.38);
+
+	// 冻结复用的动画缓动模板：高亮/子环/入场动画共用，避免每次扇区切换与子环构建 new 一份 Easing 对象。
+	private static readonly BackEase _subTierEnlrgEase = CreateFrozenEase(new BackEase
+	{
+		Amplitude = 0.35,
+		EasingMode = EasingMode.EaseOut
+	});
+
+	private static readonly CircleEase _fadeCircleEase = CreateFrozenEase(new CircleEase
+	{
+		EasingMode = EasingMode.EaseOut
+	});
+
+	private static readonly QuadraticEase _fadeQuadraticEase = CreateFrozenEase(new QuadraticEase
+	{
+		EasingMode = EasingMode.EaseOut
+	});
+
+	private static readonly CubicEase _sectorEaseOut = CreateFrozenEase(new CubicEase
+	{
+		EasingMode = EasingMode.EaseOut
+	});
+
+	private static T CreateFrozenEase<T>(T ease) where T : Freezable, IEasingFunction
+	{
+		ease.Freeze();
+		return ease;
+	}
+
+	private static readonly DoubleAnimation _escapeRestoreAnimation = CreateEscapeFadeAnimation(1.0);
+
+	private static DoubleAnimation CreateEscapeFadeAnimation(double to)
+	{
+		DoubleAnimation animation = new DoubleAnimation
+		{
+			To = to,
+			Duration = TimeSpan.FromMilliseconds(120.0),
+			EasingFunction = new QuadraticEase
+			{
+				EasingMode = EasingMode.EaseOut
+			}
+		};
+		animation.Freeze();
+		return animation;
+	}
+
 	public void SetOuterEscapeState(bool isEscaped)
 	{
 		if (_isOuterEscaped != isEscaped)
 		{
 			_isOuterEscaped = isEscaped;
-			DoubleAnimation animation = new DoubleAnimation
-			{
-				To = (isEscaped ? 0.38 : 1.0),
-				Duration = TimeSpan.FromMilliseconds(120.0),
-				EasingFunction = new QuadraticEase
-				{
-					EasingMode = EasingMode.EaseOut
-				}
-			};
-			MainGrid.BeginAnimation(UIElement.OpacityProperty, animation);
+			MainGrid.BeginAnimation(UIElement.OpacityProperty, isEscaped ? _escapeDimAnimation : _escapeRestoreAnimation);
 		}
 	}
 
@@ -2106,10 +2167,6 @@ public partial class RadialWindow : Window
 				transform.X = 0.0;
 				transform.Y = 0.0;
 			}
-			if (_allSubTiersActive)
-			{
-				WheelCanvas.Children.Remove(subSectorPath);
-			}
 		}
 		for (int i = 0; i < _subContentContainers.Count; i++)
 		{
@@ -2125,13 +2182,11 @@ public partial class RadialWindow : Window
 				transform.X = 0.0;
 				transform.Y = 0.0;
 			}
-			if (_allSubTiersActive)
-			{
-				WheelCanvas.Children.Remove(subContentContainer);
-			}
 		}
 		_subSectorPaths.Clear();
 		_subContentContainers.Clear();
+		_subTextBlocks.Clear();
+		_subIconElements.Clear();
 		_subSectorTransforms.Clear();
 		_subContainerTransforms.Clear();
 		_subSectorAngles.Clear();
@@ -2142,6 +2197,68 @@ public partial class RadialWindow : Window
 		_currentHighlightedSubSector = -1;
 	}
 
+	/// <summary>
+	/// 手势收起/唤出重置：子环视觉元素跨手势常驻 WheelCanvas（避免每次唤出全量重建），
+	/// 此处仅隐藏并回落默认视觉；仅在配置重建（ClearRenderedVisualsForRebuild）时才真正移除元素。
+	/// </summary>
+	private void ResetSubTierVisuals()
+	{
+		_allSubTiersActive = false;
+		_activeSubTierParentSector = -1;
+		_currentHighlightedSubSector = -1;
+		_lastSubHighlightPathIndex = -1;
+		_lastSubHighlightParent = -1;
+		_lastSubHighlightChild = -1;
+		foreach (KeyValuePair<int, SubTierVisuals> kv in _subTierCache)
+		{
+			SubTierVisuals visuals = kv.Value;
+			for (int i = 0; i < visuals.Paths.Count; i++)
+			{
+				System.Windows.Shapes.Path path = visuals.Paths[i];
+				path.BeginAnimation(UIElement.OpacityProperty, null);
+				path.Opacity = 1.0;
+				path.Visibility = Visibility.Collapsed;
+				path.Fill = _subDefaultSectorBrush;
+				path.Stroke = _subSectorBorderBrush;
+				path.StrokeThickness = _borderThickness;
+				Panel.SetZIndex(path, 15);
+				ApplySubSectorGlow(path, isHighlighted: false);
+				if (i < visuals.PathTransforms.Count)
+				{
+					TranslateTransform transform = visuals.PathTransforms[i];
+					transform.BeginAnimation(TranslateTransform.XProperty, null);
+					transform.BeginAnimation(TranslateTransform.YProperty, null);
+					transform.X = 0.0;
+					transform.Y = 0.0;
+				}
+			}
+			for (int i = 0; i < visuals.Containers.Count; i++)
+			{
+				Grid container = visuals.Containers[i];
+				container.BeginAnimation(UIElement.OpacityProperty, null);
+				container.Opacity = 1.0;
+				container.Visibility = Visibility.Collapsed;
+				if (i < visuals.ContainerTransforms.Count)
+				{
+					TranslateTransform transform = visuals.ContainerTransforms[i];
+					transform.BeginAnimation(TranslateTransform.XProperty, null);
+					transform.BeginAnimation(TranslateTransform.YProperty, null);
+					transform.X = 0.0;
+					transform.Y = 0.0;
+				}
+			}
+		}
+		_subSectorPaths.Clear();
+		_subContentContainers.Clear();
+		_subTextBlocks.Clear();
+		_subIconElements.Clear();
+		_subSectorTransforms.Clear();
+		_subContainerTransforms.Clear();
+		_subSectorAngles.Clear();
+		_subSectorParentIndices.Clear();
+		_subSectorChildIndices.Clear();
+	}
+
 	private void ActivateCachedSubTier(int parentIndex, SubTierVisuals visuals)
 	{
 		_activeSubTierParentSector = parentIndex;
@@ -2150,6 +2267,8 @@ public partial class RadialWindow : Window
 		_subSectorTransforms.AddRange(visuals.PathTransforms);
 		_subContainerTransforms.AddRange(visuals.ContainerTransforms);
 		_subSectorAngles.AddRange(visuals.Angles);
+		_subTextBlocks.AddRange(visuals.Texts);
+		_subIconElements.AddRange(visuals.IconPaths);
 		for (int i = 0; i < visuals.Paths.Count; i++)
 		{
 			_subSectorParentIndices.Add(parentIndex);
@@ -2157,16 +2276,17 @@ public partial class RadialWindow : Window
 		}
 
 		Duration duration = new Duration(TimeSpan.FromMilliseconds(110.0));
-		DoubleAnimation fadeIn = new DoubleAnimation(0.0, 1.0, duration)
+		// 冻结模板克隆：子环缓存激活淡入，零 Easing 分配（冻结实例 Clone 后仍可安全 BeginAnimation）
+		DoubleAnimation fadeInTemplate = new DoubleAnimation(0.0, 1.0, duration)
 		{
-			EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+			EasingFunction = (IEasingFunction)_fadeQuadraticEase
 		};
 		for (int i = 0; i < _subSectorPaths.Count; i++)
 		{
 			System.Windows.Shapes.Path path = _subSectorPaths[i];
 			path.Visibility = Visibility.Visible;
 			path.Opacity = 0.0;
-			path.BeginAnimation(UIElement.OpacityProperty, fadeIn.Clone());
+			path.BeginAnimation(UIElement.OpacityProperty, fadeInTemplate.Clone());
 			if (i < _subSectorTransforms.Count)
 			{
 				_subSectorTransforms[i].BeginAnimation(TranslateTransform.XProperty, null);
@@ -2180,7 +2300,7 @@ public partial class RadialWindow : Window
 			Grid container = _subContentContainers[i];
 			container.Visibility = Visibility.Visible;
 			container.Opacity = 0.0;
-			container.BeginAnimation(UIElement.OpacityProperty, fadeIn.Clone());
+			container.BeginAnimation(UIElement.OpacityProperty, fadeInTemplate.Clone());
 			if (i < _subContainerTransforms.Count)
 			{
 				_subContainerTransforms[i].BeginAnimation(TranslateTransform.XProperty, null);
@@ -2502,14 +2622,13 @@ public partial class RadialWindow : Window
 			Panel.SetZIndex(grid, 30);
 			WheelCanvas.Children.Add(grid);
 			_subContentContainers.Add(grid);
+			_subTextBlocks.Add(subTextElement);
+			_subIconElements.Add(frameworkElement as System.Windows.Shapes.Path);
 			_subContainerTransforms.Add(translateTransform2);
 			if (animateEntrance)
 			{
-				BackEase easingFunction = new BackEase
-				{
-					Amplitude = 0.35,
-					EasingMode = EasingMode.EaseOut
-				};
+				// 冻结复用缓动模板，消除每个子扇区构建时 new BackEase/CircleEase 的分配
+				BackEase easingFunction = _subTierEnlrgEase;
 				Duration duration = new Duration(TimeSpan.FromMilliseconds(130.0));
 				DoubleAnimation animation = new DoubleAnimation(0.75, 1.0, duration)
 				{
@@ -2517,10 +2636,7 @@ public partial class RadialWindow : Window
 				};
 				DoubleAnimation animation2 = new DoubleAnimation(0.0, 1.0, duration)
 				{
-					EasingFunction = new CircleEase
-					{
-						EasingMode = EasingMode.EaseOut
-					}
+					EasingFunction = (IEasingFunction)_fadeCircleEase
 				};
 				scaleTransform.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
 				scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
@@ -2557,12 +2673,13 @@ public partial class RadialWindow : Window
 			new List<Grid>(_subContentContainers),
 			new List<TranslateTransform>(_subSectorTransforms),
 			new List<TranslateTransform>(_subContainerTransforms),
-			new List<double>(_subSectorAngles));
+			new List<double>(_subSectorAngles),
+			new List<TextBlock?>(_subTextBlocks),
+			new List<System.Windows.Shapes.Path?>(_subIconElements));
 	}
 
 	private void ShowAllSubTiers()
 	{
-		ClearSubTier();
 		if (!ConfigManager.CurrentConfig.EnableMultiTier || ConfigManager.CurrentConfig.SubmenuStyle != "Wheel" || _profile == null)
 		{
 			return;
@@ -2575,7 +2692,24 @@ public partial class RadialWindow : Window
 			ActionItem? actionItem = _profile.GetEffectiveAction(p);
 			if (actionItem != null && actionItem.SubActions != null && actionItem.SubActions.Count > 0)
 			{
+				if (_subTierCache.TryGetValue(p, out SubTierVisuals? cachedVisuals))
+				{
+					// 上次手势已构建：直接复用视觉元素淡入，零重建
+					ActivateCachedSubTier(p, cachedVisuals);
+					continue;
+				}
+				// 按扇区切片快照：全展开模式下平面列表跨扇区累积，若整体快照会让后续扇区的缓存
+				// 混入此前扇区的元素，二次唤出全展开时 ActivateCachedSubTier 重复加入导致高亮错位。
+				int sliceStart = _subSectorPaths.Count;
 				RenderWheelSubTierForSector(p, animateEntrance: false);
+				_subTierCache[p] = new SubTierVisuals(
+					_subSectorPaths.GetRange(sliceStart, _subSectorPaths.Count - sliceStart),
+					_subContentContainers.GetRange(sliceStart, _subContentContainers.Count - sliceStart),
+					_subSectorTransforms.GetRange(sliceStart, _subSectorTransforms.Count - sliceStart),
+					_subContainerTransforms.GetRange(sliceStart, _subContainerTransforms.Count - sliceStart),
+					_subSectorAngles.GetRange(sliceStart, _subSectorAngles.Count - sliceStart),
+					_subTextBlocks.GetRange(sliceStart, _subTextBlocks.Count - sliceStart),
+					_subIconElements.GetRange(sliceStart, _subIconElements.Count - sliceStart));
 			}
 		}
 	}
@@ -2588,6 +2722,18 @@ public partial class RadialWindow : Window
 	public void HighlightSector(int mainIndex, int subIndex)
 	{
 		HighlightSector(mainIndex, subIndex, showSubTier: true);
+	}
+
+	// 冻结复用的中心退出图标高亮画刷（中心动作琥珀色 / 普通取消玫红色）。
+	private static readonly SolidColorBrush _coreExitActionFill = CreateFrozenBrush(Color.FromRgb(245, 158, 11));
+
+	private static readonly SolidColorBrush _coreExitCancelFill = CreateFrozenBrush(Color.FromRgb(244, 63, 94));
+
+	private static SolidColorBrush CreateFrozenBrush(Color color)
+	{
+		SolidColorBrush brush = new SolidColorBrush(color);
+		brush.Freeze();
+		return brush;
 	}
 
 	public void HighlightSector(int mainIndex, int subIndex, bool showSubTier)
@@ -2608,10 +2754,8 @@ public partial class RadialWindow : Window
 			_ => 80, 
 		})) : ConfigManager.CurrentConfig.CustomAnimationDurationMs);
 		int num2 = (int)num;
-		CubicEase easingFunction = new CubicEase
-		{
-			EasingMode = EasingMode.EaseOut
-		};
+		// 冻结复用缓动模板，消除每次高亮切换 new CubicEase 的分配
+		CubicEase easingFunction = _sectorEaseOut;
 		Duration duration = new Duration(TimeSpan.FromMilliseconds(num2));
 		int num3 = Math.Max(30, (int)((double)num2 * 1.12));
 		Duration duration2 = new Duration(TimeSpan.FromMilliseconds(num3));
@@ -2632,7 +2776,7 @@ public partial class RadialWindow : Window
 			bool hasCenterAction = _profile != null && _profile.EnableCenterAction && _profile.CenterAction != null && (!string.IsNullOrEmpty(_profile.CenterAction.Type) || !string.IsNullOrEmpty(_profile.CenterAction.IconKey) || !string.IsNullOrEmpty(_profile.CenterAction.Name));
 			if (hasCenterAction)
 			{
-				CoreExitIcon.Fill = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+				CoreExitIcon.Fill = _coreExitActionFill;
 				if (_styleRenderer != null)
 				{
 					_styleRenderer.ApplyExitHighlight(CoreExitIcon, isHighlighted: true);
@@ -2640,7 +2784,7 @@ public partial class RadialWindow : Window
 			}
 			else
 			{
-				CoreExitIcon.Fill = new SolidColorBrush(Color.FromRgb(244, 63, 94));
+				CoreExitIcon.Fill = _coreExitCancelFill;
 				if (_styleRenderer != null)
 				{
 					_styleRenderer.ApplyExitHighlight(CoreExitIcon, isHighlighted: true);
@@ -2658,7 +2802,6 @@ public partial class RadialWindow : Window
 		if (currentHighlightedSector >= 0 && currentHighlightedSector < _sectorPaths.Count && currentHighlightedSector != mainIndex)
 		{
 			System.Windows.Shapes.Path path = _sectorPaths[currentHighlightedSector];
-			StackPanel obj = ((currentHighlightedSector < _contentPanels.Count) ? _contentPanels[currentHighlightedSector] : null);
 			TranslateTransform translateTransform = ((currentHighlightedSector < _sectorTransforms.Count) ? _sectorTransforms[currentHighlightedSector] : null);
 			TranslateTransform translateTransform2 = ((currentHighlightedSector < _containerTransforms.Count) ? _containerTransforms[currentHighlightedSector] : null);
 			path.Fill = _defaultSectorBrush;
@@ -2687,8 +2830,8 @@ public partial class RadialWindow : Window
 					EasingFunction = easingFunction
 				});
 			}
-			TextBlock textBlock = obj?.Children.OfType<TextBlock>().FirstOrDefault();
-			System.Windows.Shapes.Path path2 = obj?.Children.OfType<System.Windows.Shapes.Path>().FirstOrDefault();
+			TextBlock? textBlock = ((currentHighlightedSector < _contentTextBlocks.Count) ? _contentTextBlocks[currentHighlightedSector] : null);
+			System.Windows.Shapes.Path? path2 = ((currentHighlightedSector < _contentIconElements.Count) ? _contentIconElements[currentHighlightedSector] : null);
 			if (textBlock != null)
 			{
 				textBlock.Foreground = _textColorBrush;
@@ -2706,7 +2849,6 @@ public partial class RadialWindow : Window
 		if (mainIndex >= 0 && mainIndex < _sectorPaths.Count)
 		{
 			System.Windows.Shapes.Path path3 = _sectorPaths[mainIndex];
-			StackPanel obj2 = ((mainIndex < _contentPanels.Count) ? _contentPanels[mainIndex] : null);
 			TranslateTransform translateTransform3 = ((mainIndex < _sectorTransforms.Count) ? _sectorTransforms[mainIndex] : null);
 			TranslateTransform translateTransform4 = ((mainIndex < _containerTransforms.Count) ? _containerTransforms[mainIndex] : null);
 			double num4 = ((mainIndex < _sectorAngles.Count) ? _sectorAngles[mainIndex] : 0.0);
@@ -2738,8 +2880,8 @@ public partial class RadialWindow : Window
 					EasingFunction = easingFunction
 				});
 			}
-			TextBlock textBlock2 = obj2?.Children.OfType<TextBlock>().FirstOrDefault();
-			System.Windows.Shapes.Path path4 = obj2?.Children.OfType<System.Windows.Shapes.Path>().FirstOrDefault();
+			TextBlock? textBlock2 = ((mainIndex < _contentTextBlocks.Count) ? _contentTextBlocks[mainIndex] : null);
+			System.Windows.Shapes.Path? path4 = ((mainIndex < _contentIconElements.Count) ? _contentIconElements[mainIndex] : null);
 			if (textBlock2 != null)
 			{
 				textBlock2.Foreground = Brushes.White;
@@ -2769,105 +2911,149 @@ public partial class RadialWindow : Window
 		{
 			ClearSubTier();
 		}
-		if (_subSectorPaths.Count <= 0)
+		// 子环高亮采用增量更新（恢复旧高亮 + 应用新高亮），不再每次全遍历所有子扇区路径，
+		// 消除每帧 O(N) 的 LINQ Children 遍历与刷属性开销（全展开时可达 30+ 子扇区）。
+		UpdateSubSectorHighlight(mainIndex, subIndex, duration, easingFunction);
+	}
+
+	// 上一次子环高亮状态（_subSectorPaths 内的索引 + 语义键），用于增量回落
+	private int _lastSubHighlightPathIndex = -1;
+
+	private int _lastSubHighlightParent = -1;
+
+	private int _lastSubHighlightChild = -1;
+
+	private void UpdateSubSectorHighlight(int mainIndex, int subIndex, Duration duration, IEasingFunction easingFunction)
+	{
+		// 1) 恢复上一次高亮的子扇区。仅当旧索引仍在本轮视觉树内时才需回落
+		//    （主扇区切换时 ShowSubTier/ClearSubTier 已更换视觉树列表，旧元素随之隐藏，跳过即可）。
+		if (_lastSubHighlightPathIndex >= 0 && _lastSubHighlightPathIndex < _subSectorPaths.Count)
+		{
+			ApplySubSectorState(_lastSubHighlightPathIndex, isHighlighted: false, duration, easingFunction);
+		}
+		_lastSubHighlightPathIndex = -1;
+		_lastSubHighlightParent = -1;
+		_lastSubHighlightChild = -1;
+
+		if (subIndex < 0 || _subSectorPaths.Count <= 0)
 		{
 			return;
 		}
+
+		// 2) 定位并应用新高亮：全展开模式下所有主扇区子环并存，需按 (parent, child) 匹配；
+		//    非全展开模式视觉树即当前主扇区子环组，按 child 命中即可。
 		for (int i = 0; i < _subSectorPaths.Count; i++)
 		{
-			System.Windows.Shapes.Path path5 = _subSectorPaths[i];
-			TranslateTransform translateTransform5 = ((i < _subSectorTransforms.Count) ? _subSectorTransforms[i] : null);
-			Grid obj3 = ((i < _subContentContainers.Count) ? _subContentContainers[i] : null);
-			TranslateTransform translateTransform6 = ((i < _subContainerTransforms.Count) ? _subContainerTransforms[i] : null);
-			double num5 = ((i < _subSectorAngles.Count) ? _subSectorAngles[i] : 0.0);
-			TextBlock textBlock3 = obj3?.Children.OfType<StackPanel>().FirstOrDefault()?.Children.OfType<TextBlock>().FirstOrDefault();
-			System.Windows.Shapes.Path path6 = obj3?.Children.OfType<StackPanel>().FirstOrDefault()?.Children.OfType<System.Windows.Shapes.Path>().FirstOrDefault();
-			bool isHighlighted = _allSubTiersActive
+			bool match = _allSubTiersActive
 				? (i < _subSectorParentIndices.Count && i < _subSectorChildIndices.Count &&
-				   _subSectorParentIndices[i] == mainIndex && _subSectorChildIndices[i] == subIndex && subIndex >= 0)
-				: (i == subIndex);
-			if (isHighlighted)
+				   _subSectorParentIndices[i] == mainIndex && _subSectorChildIndices[i] == subIndex)
+				: (i < _subSectorChildIndices.Count && _subSectorChildIndices[i] == subIndex);
+			if (!match)
 			{
-				path5.Fill = _subHighlightSectorBrush;
-				path5.Stroke = _subHighlightBorderBrush;
-				path5.StrokeThickness = _highlightBorderThickness;
-				Panel.SetZIndex(path5, 18);
-				ApplySubSectorGlow(path5, isHighlighted: true);
-				if (textBlock3 != null)
-				{
-					textBlock3.Foreground = Brushes.White;
-					textBlock3.FontWeight = FontWeights.Bold;
-				}
-				if (path6 != null)
-				{
-					path6.Fill = Brushes.White;
-				}
-				double toValue4 = Math.Cos(num5) * 4.0;
-				double toValue5 = Math.Sin(num5) * 4.0;
-				if (translateTransform5 != null)
-				{
-					translateTransform5.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform5.X, toValue4, duration)
-					{
-						EasingFunction = easingFunction
-					});
-					translateTransform5.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform5.Y, toValue5, duration)
-					{
-						EasingFunction = easingFunction
-					});
-				}
-				if (translateTransform6 != null)
-				{
-					translateTransform6.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform6.X, toValue4, duration)
-					{
-						EasingFunction = easingFunction
-					});
-					translateTransform6.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform6.Y, toValue5, duration)
-					{
-						EasingFunction = easingFunction
-					});
-				}
+				continue;
 			}
-			else
+			ApplySubSectorState(i, isHighlighted: true, duration, easingFunction);
+			_lastSubHighlightPathIndex = i;
+			_lastSubHighlightParent = mainIndex;
+			_lastSubHighlightChild = subIndex;
+			break;
+		}
+	}
+
+	private void ApplySubSectorState(int i, bool isHighlighted, Duration duration, IEasingFunction easingFunction)
+	{
+		System.Windows.Shapes.Path path5 = _subSectorPaths[i];
+		TranslateTransform translateTransform5 = ((i < _subSectorTransforms.Count) ? _subSectorTransforms[i] : null);
+		TranslateTransform translateTransform6 = ((i < _subContainerTransforms.Count) ? _subContainerTransforms[i] : null);
+		double num5 = ((i < _subSectorAngles.Count) ? _subSectorAngles[i] : 0.0);
+		TextBlock? textBlock3 = ((i < _subTextBlocks.Count) ? _subTextBlocks[i] : null);
+		System.Windows.Shapes.Path? path6 = ((i < _subIconElements.Count) ? _subIconElements[i] : null);
+		if (isHighlighted)
+		{
+			path5.Fill = _subHighlightSectorBrush;
+			path5.Stroke = _subHighlightBorderBrush;
+			path5.StrokeThickness = _highlightBorderThickness;
+			Panel.SetZIndex(path5, 18);
+			ApplySubSectorGlow(path5, isHighlighted: true);
+			if (textBlock3 != null)
 			{
-				path5.Fill = _subDefaultSectorBrush;
-				path5.Stroke = _subSectorBorderBrush;
-				path5.StrokeThickness = _borderThickness;
-				Panel.SetZIndex(path5, 15);
-				ApplySubSectorGlow(path5, isHighlighted: false);
-				if (textBlock3 != null)
+				textBlock3.Foreground = Brushes.White;
+				textBlock3.FontWeight = FontWeights.Bold;
+			}
+			if (path6 != null)
+			{
+				path6.Fill = Brushes.White;
+			}
+			double toValue4 = Math.Cos(num5) * 4.0;
+			double toValue5 = Math.Sin(num5) * 4.0;
+			if (translateTransform5 != null)
+			{
+				translateTransform5.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform5.X, toValue4, duration)
 				{
-					textBlock3.Foreground = _subTextColorBrush;
-					textBlock3.FontWeight = FontWeights.Medium;
-				}
-				if (path6 != null)
+					EasingFunction = easingFunction
+				});
+				translateTransform5.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform5.Y, toValue5, duration)
 				{
-					path6.Fill = _subTextColorBrush;
-				}
-				if (translateTransform5 != null && (translateTransform5.X != 0.0 || translateTransform5.Y != 0.0))
+					EasingFunction = easingFunction
+				});
+			}
+			if (translateTransform6 != null)
+			{
+				translateTransform6.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform6.X, toValue4, duration)
 				{
-					translateTransform5.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform5.X, 0.0, duration)
-					{
-						EasingFunction = easingFunction
-					});
-					translateTransform5.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform5.Y, 0.0, duration)
-					{
-						EasingFunction = easingFunction
-					});
-				}
-				if (translateTransform6 != null && (translateTransform6.X != 0.0 || translateTransform6.Y != 0.0))
+					EasingFunction = easingFunction
+				});
+				translateTransform6.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform6.Y, toValue5, duration)
 				{
-					translateTransform6.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform6.X, 0.0, duration)
-					{
-						EasingFunction = easingFunction
-					});
-					translateTransform6.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform6.Y, 0.0, duration)
-					{
-						EasingFunction = easingFunction
-					});
-				}
+					EasingFunction = easingFunction
+				});
+			}
+		}
+		else
+		{
+			path5.Fill = _subDefaultSectorBrush;
+			path5.Stroke = _subSectorBorderBrush;
+			path5.StrokeThickness = _borderThickness;
+			Panel.SetZIndex(path5, 15);
+			ApplySubSectorGlow(path5, isHighlighted: false);
+			if (textBlock3 != null)
+			{
+				textBlock3.Foreground = _subTextColorBrush;
+				textBlock3.FontWeight = FontWeights.Medium;
+			}
+			if (path6 != null)
+			{
+				path6.Fill = _subTextColorBrush;
+			}
+			if (translateTransform5 != null && (translateTransform5.X != 0.0 || translateTransform5.Y != 0.0))
+			{
+				translateTransform5.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform5.X, 0.0, duration)
+				{
+					EasingFunction = easingFunction
+				});
+				translateTransform5.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform5.Y, 0.0, duration)
+				{
+					EasingFunction = easingFunction
+				});
+			}
+			if (translateTransform6 != null && (translateTransform6.X != 0.0 || translateTransform6.Y != 0.0))
+			{
+				translateTransform6.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(translateTransform6.X, 0.0, duration)
+				{
+					EasingFunction = easingFunction
+				});
+				translateTransform6.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateTransform6.Y, 0.0, duration)
+				{
+					EasingFunction = easingFunction
+				});
 			}
 		}
 	}
+
+	// 子轮盘光晕 Effect 缓存：按配置修订号失效重建。高亮切换零字符串解析、零 Effect 实例化。
+	private long _subGlowEffectRevision = -1L;
+
+	private System.Windows.Media.Effects.DropShadowEffect? _cachedSubGlowEffect;
 
 	private void ApplySubSectorGlow(System.Windows.Shapes.Path path, bool isHighlighted)
 	{
@@ -2876,6 +3062,17 @@ public partial class RadialWindow : Window
 			path.Effect = null;
 			return;
 		}
+		long revision = ConfigManager.ConfigurationRevision;
+		if (_subGlowEffectRevision != revision)
+		{
+			_cachedSubGlowEffect = BuildSubGlowEffect();
+			_subGlowEffectRevision = revision;
+		}
+		path.Effect = _cachedSubGlowEffect;
+	}
+
+	private System.Windows.Media.Effects.DropShadowEffect? BuildSubGlowEffect()
+	{
 		string text = ConfigManager.CurrentConfig?.SubWheelHighlightGlowPreset ?? "FollowPrimary";
 		if (text == "FollowPrimary")
 		{
@@ -2883,22 +3080,21 @@ public partial class RadialWindow : Window
 		}
 		if (text == "None")
 		{
-			path.Effect = null;
-			return;
+			return null;
 		}
 		Color color;
 		if (!(text == "Custom") || string.IsNullOrEmpty(ConfigManager.CurrentConfig?.SubWheelHighlightGlowColor))
 		{
 			color = text switch
 			{
-				"Lilac" => Color.FromRgb(168, 85, 247), 
-				"Blue" => Color.FromRgb(59, 130, 246), 
-				"Emerald" => Color.FromRgb(16, 185, 129), 
-				"Rose" => Color.FromRgb(236, 72, 153), 
-				"Amber" => Color.FromRgb(245, 158, 11), 
-				"Red" => Color.FromRgb(239, 68, 68), 
-				"White" => Color.FromRgb(byte.MaxValue, byte.MaxValue, byte.MaxValue), 
-				_ => (_subHighlightBorderBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush) ? solidColorBrush.Color : ((_subHighlightSectorBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush2) ? solidColorBrush2.Color : ((!(_highlightBorderBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush3)) ? Color.FromRgb(59, 130, 246) : solidColorBrush3.Color)), 
+				"Lilac" => Color.FromRgb(168, 85, 247),
+				"Blue" => Color.FromRgb(59, 130, 246),
+				"Emerald" => Color.FromRgb(16, 185, 129),
+				"Rose" => Color.FromRgb(236, 72, 153),
+				"Amber" => Color.FromRgb(245, 158, 11),
+				"Red" => Color.FromRgb(239, 68, 68),
+				"White" => Color.FromRgb(byte.MaxValue, byte.MaxValue, byte.MaxValue),
+				_ => (_subHighlightBorderBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush) ? solidColorBrush.Color : ((_subHighlightSectorBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush2) ? solidColorBrush2.Color : ((!(_highlightBorderBrush is SolidColorBrush { Color: { A: >0 } } solidColorBrush3)) ? Color.FromRgb(59, 130, 246) : solidColorBrush3.Color)),
 			};
 		}
 		else
@@ -2936,13 +3132,29 @@ public partial class RadialWindow : Window
 			num2 = ((currentConfig4 != null && currentConfig4.HighlightGlowOpacity >= 0.0) ? ConfigManager.CurrentConfig.HighlightGlowOpacity : 0.85);
 		}
 		double opacity = num2;
-		path.Effect = new DropShadowEffect
+		System.Windows.Media.Effects.DropShadowEffect effect = new System.Windows.Media.Effects.DropShadowEffect
 		{
 			Color = color,
 			BlurRadius = blurRadius,
 			ShadowDepth = 0.0,
 			Opacity = opacity
 		};
+		effect.Freeze();
+		return effect;
+	}
+
+	// 冻结复用的中心图选中态模糊遮罩：避免每次扇区高亮 new BlurEffect。
+	private static readonly System.Windows.Media.Effects.BlurEffect _coreSelectionImageBlurEffect = CreateFrozenBlurEffect();
+
+	private static System.Windows.Media.Effects.BlurEffect CreateFrozenBlurEffect()
+	{
+		System.Windows.Media.Effects.BlurEffect effect = new System.Windows.Media.Effects.BlurEffect
+		{
+			Radius = 5.5,
+			RenderingBias = RenderingBias.Performance
+		};
+		effect.Freeze();
+		return effect;
 	}
 
 	private void UpdateCoreSelectionDisplay(int mainIndex, int subIndex)
@@ -2970,7 +3182,7 @@ public partial class RadialWindow : Window
 			CoreExitIcon.Opacity = (CoreExitIcon.Visibility == Visibility.Visible) ? 0.18 : _defaultCoreExitIconOpacity;
 			CoreCustomImageEllipse.Opacity = _defaultCoreCustomImageOpacity;
 			CoreCustomImageEllipse.Effect = (CoreCustomImageEllipse.Visibility == Visibility.Visible)
-				? new BlurEffect { Radius = 5.5, RenderingBias = RenderingBias.Performance }
+				? _coreSelectionImageBlurEffect
 				: _defaultCoreCustomImageEffect;
 			Panel.SetZIndex(CoreSelectionOverlay, 20);
 			Panel.SetZIndex(CoreSelectionTextPanel, 21);
@@ -3546,6 +3758,8 @@ public partial class RadialWindow : Window
 			Panel.SetZIndex(grid, 35);
 			WheelCanvas.Children.Add(grid);
 			_subContentContainers.Add(grid);
+			_subTextBlocks.Add(textBlock);
+			_subIconElements.Add(frameworkElement as System.Windows.Shapes.Path);
 			_subContainerTransforms.Add(translateTransform2);
 
 			int durationMs = (ConfigManager.CurrentConfig?.AnimationSpeed == "Custom" && ConfigManager.CurrentConfig.CustomAnimationDurationMs > 0) 
@@ -3577,7 +3791,9 @@ public partial class RadialWindow : Window
 			new List<Grid>(_subContentContainers),
 			new List<TranslateTransform>(_subSectorTransforms),
 			new List<TranslateTransform>(_subContainerTransforms),
-			new List<double>(_subSectorAngles));
+			new List<double>(_subSectorAngles),
+			new List<TextBlock?>(_subTextBlocks),
+			new List<System.Windows.Shapes.Path?>(_subIconElements));
 	}
 
 }
