@@ -170,7 +170,74 @@ public static class I18n
 				return value3;
 			}
 		}
+
+		// 插件词条（外部注册）。
+		// 走「写时复制」的独立字典而不是直接改 Translations：Translations 在静态构造后即视为只读，
+		// 而它的读取遍布 UI 与渲染线程，直接插入会与其形成无锁并发读写。
+		// 外部字典在零插件时恒为空，这里的开销只有一次 volatile 读 + Count 判断。
+		Dictionary<string, Dictionary<LanguageCode, string>>? external = _externalTranslations;
+		if (external.Count > 0 && external.TryGetValue(key, out Dictionary<LanguageCode, string>? extValue))
+		{
+			if (extValue.TryGetValue(_currentLanguage, out var extCurrent))
+			{
+				return extCurrent;
+			}
+			if (extValue.TryGetValue(LanguageCode.ZhCn, out var extFallback))
+			{
+				return extFallback;
+			}
+			// 有词条但没有当前语言也没有中文兜底：取第一个可用值，好过把 key 显示给用户
+			foreach (string candidate in extValue.Values)
+			{
+				return candidate;
+			}
+		}
+
 		return key;
+	}
+
+	// ------------------------------------------------------------------ 插件外部词条
+
+	/// <summary>
+	/// 插件词条的写时复制快照。读取侧完全无锁；写入侧只在插件启用/停用时发生（低频）。
+	/// </summary>
+	private static volatile Dictionary<string, Dictionary<LanguageCode, string>> _externalTranslations
+		= new Dictionary<string, Dictionary<LanguageCode, string>>(StringComparer.Ordinal);
+
+	/// <summary>当前已注册的插件词条数量（诊断用）。</summary>
+	public static int ExternalTranslationCount => _externalTranslations.Count;
+
+	/// <summary>
+	/// 注册一条插件词条。<paramref name="fullKey"/> 必须是完整 key（含 <c>plugin.&lt;id&gt;.</c> 前缀），
+	/// 归一化由宿主在 <c>II18nRegistry</c> 实现里完成，此处不做二次加工。
+	/// </summary>
+	public static bool RegisterExternal(string fullKey, Dictionary<LanguageCode, string> values)
+	{
+		if (string.IsNullOrWhiteSpace(fullKey) || values == null || values.Count == 0)
+		{
+			return false;
+		}
+
+		var next = new Dictionary<string, Dictionary<LanguageCode, string>>(_externalTranslations, StringComparer.Ordinal)
+		{
+			[fullKey] = new Dictionary<LanguageCode, string>(values),
+		};
+		_externalTranslations = next;
+		return true;
+	}
+
+	/// <summary>注销一条插件词条。</summary>
+	public static bool UnregisterExternal(string fullKey)
+	{
+		if (string.IsNullOrWhiteSpace(fullKey) || !_externalTranslations.ContainsKey(fullKey))
+		{
+			return false;
+		}
+
+		var next = new Dictionary<string, Dictionary<LanguageCode, string>>(_externalTranslations, StringComparer.Ordinal);
+		bool removed = next.Remove(fullKey);
+		_externalTranslations = next;
+		return removed;
 	}
 
 	static I18n()
@@ -688,6 +755,27 @@ public static class I18n
 			[LanguageCode.ZhTw] = "系統與右鍵工具",
 			[LanguageCode.En] = "Shell & System Tools",
 			[LanguageCode.Ja] = "シェル・右クリックツール"
+		};
+		dictionary["ActionTypePluginShort"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "插件动作",
+			[LanguageCode.ZhTw] = "外掛動作",
+			[LanguageCode.En] = "Plugin Action",
+			[LanguageCode.Ja] = "プラグイン動作"
+		};
+		dictionary["PluginPageHeader"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "插件与扩展",
+			[LanguageCode.ZhTw] = "外掛與擴充",
+			[LanguageCode.En] = "Plugins & Extensions",
+			[LanguageCode.Ja] = "プラグインと拡張"
+		};
+		dictionary["PluginPageSubheader"] = new Dictionary<LanguageCode, string>
+		{
+			[LanguageCode.ZhCn] = "手动选择 .dll 安装社区插件。插件以 StarPie 当前权限在进程内运行，请只安装你信任的来源。",
+			[LanguageCode.ZhTw] = "手動選擇 .dll 安裝社群外掛。外掛以 StarPie 目前權限在行程內執行，請僅安裝你信任的來源。",
+			[LanguageCode.En] = "Install community plugins by picking a .dll manually. Plugins run in-process with StarPie's current privileges - only install sources you trust.",
+			[LanguageCode.Ja] = "コミュニティプラグインは .dll を手動で選択してインストールします。プラグインは StarPie の権限でプロセス内実行されるため、信頼できる提供元のみ導入してください。"
 		};
 		dictionary["ActionTypeCommandShort"] = new Dictionary<LanguageCode, string>
 		{

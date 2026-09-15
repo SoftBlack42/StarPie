@@ -59,6 +59,33 @@ public class ActionItem
 	[System.Text.Json.Serialization.JsonIgnore]
 	public bool IsInherited { get; set; }
 
+	/// <summary>
+	/// 插件动作引用。当 <see cref="Type"/> 为 <c>"Plugin"</c> 时使用。
+	/// <para>
+	/// 插件动作统一持久化为 <c>Type="Plugin"</c> 而不是占用内置 type 字符串空间：
+	/// 旧版主程序读到它会命中 <c>switch</c> 的无匹配分支 → 静默无操作，
+	/// 而<b>不会</b>崩溃。这是选择 "Plugin" 而非复用内置 type 的核心原因。
+	/// </para>
+	/// </summary>
+	public StarPie.Plugin.PluginActionRef? PluginActionRef { get; set; }
+
+	/// <summary>
+	/// 插件动作的参数（键值一律为字符串）。
+	/// <para>
+	/// 为什么不用插件自定义类型：① 配置由主程序用 System.Text.Json 序列化，插件类型不可序列化；
+	/// ② 字符串 KV 能被任意未来版本安全读写；③ 强制插件在边界处做类型转换与校验，
+	/// 天然形成「对外契约 vs 内部实现」的解耦；④ 规避巨型字符串进入 config.json 造成的 LOH 膨胀。
+	/// </para>
+	/// </summary>
+	public Dictionary<string, string>? ExtensionData { get; set; }
+
+	/// <summary>
+	/// 未知字段兜底容器。让本字段所在的整个 ActionItem 在「旧版读出 → 保存」过程中
+	/// 不会丢掉读不懂的键（详细理由见 AppConfig.Extras）。
+	/// </summary>
+	[System.Text.Json.Serialization.JsonExtensionData]
+	public Dictionary<string, System.Text.Json.JsonElement>? Extras { get; set; }
+
 	public List<ActionItem> SubActions { get; set; } = new List<ActionItem>();
 
 	public ActionItem Clone()
@@ -85,6 +112,11 @@ public class ActionItem
 			CustomTextPlacement = this.CustomTextPlacement,
 			CustomTextOffsetX = this.CustomTextOffsetX,
 			CustomTextOffsetY = this.CustomTextOffsetY,
+			// 深拷贝插件引用与参数：浅拷贝会让「复制动作后改参数」连带改掉原动作
+			PluginActionRef = this.PluginActionRef?.Clone(),
+			ExtensionData = this.ExtensionData == null
+				? null
+				: new Dictionary<string, string>(this.ExtensionData, StringComparer.OrdinalIgnoreCase),
 			SubActions = new List<ActionItem>()
 		};
 		if (this.SubActions != null)

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using WinPieGestures.Plugins;
 
 namespace WinPieGestures;
 
@@ -62,6 +63,12 @@ public class GestureMappingViewModel : INotifyPropertyChanged
 		get
 		{
 			string t = Mapping.Action.Type ?? "Hotkey";
+			if (t == PluginActionBinding.TypeName)
+			{
+				// 类型下拉里插件动作只有一项，类型即自身。
+				// 具体是哪一个动作由子下拉承载，不必再把贡献点 ID 编码进 Tag。
+				return PluginActionBinding.TypeName;
+			}
 			if (t == "Tile" || t == "ToggleTopmost" || t == "MoveMonitor" || t == "WindowOpacity" || t == "SwitchWindow" || t == "WindowManager")
 			{
 				return "WindowManager";
@@ -72,10 +79,18 @@ public class GestureMappingViewModel : INotifyPropertyChanged
 		{
 			if (!string.IsNullOrEmpty(value))
 			{
-				if (value == "WindowManager")
+				if (value == PluginActionBinding.TypeName)
+				{
+					// 只切类型，**刻意不清插件引用**：用户在内置类型与插件动作之间来回切换时，
+					// 已配好的插件动作不应被清掉（改选具体动作是子下拉的事）。
+					// 引用为空只表示「还没选过」，由子下拉的空状态提示去引导。
+					Type = PluginActionBinding.TypeName;
+				}
+				else if (value == "WindowManager")
 				{
 					if (!IsWindowManagerType)
 					{
+						PluginActionBinding.Clear(Mapping.Action);
 						Type = "Tile";
 						if (string.IsNullOrEmpty(Mapping.Action.Parameter))
 						{
@@ -85,14 +100,57 @@ public class GestureMappingViewModel : INotifyPropertyChanged
 				}
 				else
 				{
+					// 切回内置动作类型时必须清掉插件引用，否则会残留一个
+					// 「Type 是内置类型、却还挂着插件引用」的混合状态。
+					PluginActionBinding.Clear(Mapping.Action);
 					Type = value;
 				}
 				OnPropertyChanged(nameof(AggregatedType));
 				OnPropertyChanged(nameof(IsWindowManagerType));
+				OnPropertyChanged(nameof(IsPluginType));
+				OnPropertyChanged(nameof(PluginActionOptions));
 				NotifyAllPropertiesChanged();
 			}
 		}
 	}
+
+	/// <summary>当前动作是否为插件动作（用于界面显示对应的编辑面板与子下拉）。</summary>
+	public bool IsPluginType => Type == PluginActionBinding.TypeName;
+
+	/// <summary>
+	/// 子下拉的候选插件动作，已按插件分组（分组头即插件显示名，本身不可选中）。
+	/// <para>每次求值都重建，以便新启用的插件立刻出现在自己的分组里。</para>
+	/// </summary>
+	public ICollectionView? PluginActionOptions => PluginActionBinding.BuildPluginActionView();
+
+	/// <summary>
+	/// 子下拉当前选中的插件动作全 ID。
+	/// </summary>
+	public string? SelectedPluginActionFullId
+	{
+		get => PluginActionBinding.ProjectSelectedAction(Mapping.Action);
+		set
+		{
+			// ItemsSource 重建时下拉框会把 SelectedValue 置空 —— 那不是用户的意图。
+			// 不忽略的话，每次刷新都会把用户配好的动作清掉。
+			if (string.IsNullOrEmpty(value)) return;
+
+			if (PluginActionBinding.ProjectSelectedAction(Mapping.Action) == value) return;
+
+			if (PluginActionBinding.Apply(Mapping.Action, value))
+			{
+				OnPropertyChanged(nameof(SelectedPluginActionFullId));
+				OnPropertyChanged(nameof(IsPluginActionBroken));
+				NotifyAllPropertiesChanged();
+			}
+		}
+	}
+
+	/// <summary>
+	/// 所引用的插件动作是否已失效（插件被停用或卸载）。
+	/// <para>与「尚未选定」严格区分：这种情况必须显式提示，否则用户会以为自己的配置丢了。</para>
+	/// </summary>
+	public bool IsPluginActionBroken => PluginActionBinding.IsReferenceBroken(Mapping.Action);
 
 	public bool IsWindowManagerType => 
 		Type == "Tile" || Type == "ToggleTopmost" || Type == "MoveMonitor" || 
@@ -172,6 +230,16 @@ public class GestureMappingViewModel : INotifyPropertyChanged
 		OnPropertyChanged(nameof(Name));
 		OnPropertyChanged(nameof(SelectedSystemPreset));
 		OnPropertyChanged(nameof(TileLayout));
+
+		// 插件动作相关：让子下拉的可见性与选中值跟上类型变化。
+		//
+		// 注意**不要**在这里通知 PluginActionOptions：它的 getter 每次求值都会重建集合视图，
+		// 而本方法在很多路径上被调用（包括用户刚在子下拉里选定动作那一下）。
+		// 一旦纳入全量通知，用户选完动作就会立刻重建候选集并重设 ItemsSource。
+		// 类型切换那处（AggregatedType 的 setter）已经单独通知过它了，那是唯一真正需要的时机。
+		OnPropertyChanged(nameof(IsPluginType));
+		OnPropertyChanged(nameof(SelectedPluginActionFullId));
+		OnPropertyChanged(nameof(IsPluginActionBroken));
 	}
 
 	public string Pattern
@@ -203,6 +271,12 @@ public class GestureMappingViewModel : INotifyPropertyChanged
 				OnPropertyChanged(nameof(IsCommandType));
 				OnPropertyChanged(nameof(IsSwitchWindowType));
 				OnPropertyChanged(nameof(IsTileType));
+
+				// 类型切换是子下拉**唯一**需要重建候选集的时机；
+				// 其余路径（例如用户刚选定了一个动作）刻意不重建，见 NotifyAllPropertiesChanged 的说明。
+				OnPropertyChanged(nameof(IsPluginType));
+				OnPropertyChanged(nameof(PluginActionOptions));
+				OnPropertyChanged(nameof(IsPluginActionBroken));
 			}
 		}
 	}

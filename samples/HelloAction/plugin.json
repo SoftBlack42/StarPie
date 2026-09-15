@@ -1,0 +1,31 @@
+{
+  "$schema": "./plugin.schema.json",
+  "schemaVersion": 1,
+
+  "id": "com.example.hello",
+  "name": "Hello 示例插件",
+  "description": "演示 StarPie 插件 SDK 的最小可用形态：自定义动作、参数表单、图标与多语言。",
+  "author": "StarPie Studio",
+  "homepage": "https://github.com/SoftBlack42/StarPie",
+  "license": "MIT",
+  "version": "1.0.0",
+
+  "apiVersion": "1.0",
+  "minHostVersion": "1.7.4",
+
+  "targetFramework": "net8.0-windows",
+  "platform": "win-x64",
+
+  "assembly": "StarPie.Plugin.HelloAction.dll",
+  "entryType": "StarPie.Plugin.HelloAction.HelloActionPlugin",
+
+  "capabilities": ["Process", "Ui"],
+
+  "contributions": {
+    "actions": true,
+    "icons": true,
+    "i18n": true
+  },
+
+  "tags": ["示例", "入门", "Hello"]
+}

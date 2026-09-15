@@ -434,6 +434,17 @@ public static class IconHelper
 		{
 			return value;
 		}
+		// 插件贡献的矢量图标：key 形如 plugin:<pluginId>:<shortKey>（见 PluginApi.IconKeyPrefix）。
+		// 放在内置图标之后、裸 path 判定之前 —— 前缀唯一，不会与既有 key 撞车；
+		// 而放在裸 path 判定之前是因为插件 key 一定不是以 "M" 开头的路径数据。
+		if (key.StartsWith(StarPie.Plugin.PluginApi.IconKeyPrefix, StringComparison.OrdinalIgnoreCase))
+		{
+			string? pluginSvg = Plugins.PluginHost.Catalog.ResolveIcon(key);
+			if (!string.IsNullOrEmpty(pluginSvg))
+			{
+				return pluginSvg;
+			}
+		}
 		if (key.Trim().StartsWith("M", StringComparison.OrdinalIgnoreCase) && key.Contains(","))
 		{
 			return key.Trim();

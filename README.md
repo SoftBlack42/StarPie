@@ -283,6 +283,32 @@ StarPie `v1.6.8` 在原有快捷轮盘基础上，进一步整合了**轨迹手�
   <img src="./attachments/系统内置更新与贡献展示.gif" width="680" alt="系统内置更新与贡献展示演示" />
 </div>
 
+### 16. 🧩 插件系统（社区共创，进程内运行）
+
+- **两种安装入口**：把插件 `.dll` 放进**程序目录的 `plugin` 文件夹**后点「重新扫描」，
+  在候选卡片上点安装；或在设置里点「安装插件 (.dll)」直接挑文件。
+- **⚠️ 放进 `plugin\` 只会用那一枚 `.dll`**：插件包里的其它文件（图标、资源、依赖 dll）
+  不会被一起复制过去。需要**整包安装**时请改用「安装插件 (.dll)」，选中插件包目录里带
+  `plugin.json` 的那一枚 —— 识别到清单后宿主会整目录复制。
+- **两个目录职责分开，互不干扰**：
+
+  | 目录 | 角色 |
+  | :--- | :--- |
+  | `<程序目录>\plugin\` | **只读来源区**：随包分发的待安装候选，扁平且只放 `.dll`。StarPie **只读不写**，不会在这里创建任何文件 |
+  | `%LOCALAPPDATA%\StarPie\plugin-data\` | **可写数据目录**：安装副本、启用状态、插件私有数据都在这里，卸载时整目录清除 |
+
+- **安装与启用分离**：装完默认是「已安装但未启用」，必须手动勾选才会加载 ——
+  避免「放一份文件进去」等价于「放行它的代码」。安装前会展示 ID、版本、作者、目标框架、
+  架构、SHA256、签名状态与声明的能力清单。
+- **候选卡片会直接告诉你结论**：可安装 / 有新版本 / 版本更旧 / 已装同版本 / 内容已变 /
+  ID 重复 / 无法识别。同一 ID 出现两份文件时两份都会被标成「ID 重复」且不给安装按钮。
+- **失败自保护**：单个插件加载失败或连续触发异常会被隔离，不影响 StarPie 本体；
+  连续两次启动异常会进入安全模式并临时禁用可疑插件。
+- **给插件作者**：`samples/` 下有两个可直接参照的示例（`HelloAction` 为参考模板，
+  `ScreenBrightness` 覆盖 P/Invoke、COM 与耗时 IO 三类难题）。调试时可用
+  `StarPie.exe --plugin-selftest <插件.dll> [报告路径] [--skip-invoke]` 在临时沙箱里跑
+  全链路自检（不会碰你已装好的插件），或用 `StarPie.exe --plugin-paths` 查看当前生效的目录。
+
 ---
 
 ## <a id="download"></a>🚀 快速开始与下载
@@ -370,6 +396,7 @@ StarPie/
 │   ├── GestureTrailOverlay.cs       # 轨迹绘制和释放提示浮层
 │   ├── RadialWindow.xaml(.cs)       # 轮盘透明窗口与运行时渲染
 │   ├── SettingsWindow.xaml(.cs)     # 双栏画布、聚焦编辑与系统设置
+│   ├── Plugin/                      # 插件宿主（加载上下文、识别、注册、参数表单、自检）
 │   ├── WindowTaskbarHelper.cs       # 任务栏顺序、窗口图标与切换快照
 │   ├── WindowTiler.cs               # 窗口平铺、恢复、循环与跨屏控制
 │   ├── WindowPickerWindow.xaml(.cs) # 活动窗口和进程捕捉器
@@ -383,6 +410,8 @@ StarPie/
 │   ├── ConfigManager.cs             # 配置持久化、导入导出与自启
 │   ├── IconHelper.cs                # 内置 / 程序 / 自定义图标解析
 │   └── WinPieGestures.csproj        # .NET 8 WPF 项目配置
+├── StarPie.Plugin.Abstractions/     # 插件 SDK 契约（插件唯一允许引用的 StarPie 程序集）
+├── samples/                         # 示例插件（参考模板 + P/Invoke / COM / 耗时 IO 压力样本）
 ├── releases/                        # 历史版本与发布归档
 ├── attachments/                     # README 截图、GIF 与待补演示素材
 ├── tests/                           # pywinauto GUI 自动化测试

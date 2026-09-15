@@ -147,6 +147,30 @@
                       <ComboBox Grid.Column="1" Style="{StaticResource FlatComboBoxStyle}" Height="30" SelectedValuePath="Tag" DisplayMemberPath="DisplayText" ItemsSource="{Binding AggregatedActionTypes}" SelectedValue="{Binding AggregatedType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     </Grid>
 
+                    <!--
+                      插件动作子下拉：仅当类型选为「插件动作」时出现。
+                      候选动作按插件分组呈现，分组头就是插件显示名，且分组头本身不可选中。
+                    -->
+                    <Grid Margin="0,0,0,10" Visibility="{Binding IsPluginType, Converter={StaticResource BoolToVis}}">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="插件动作:" VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,10,0" />
+                      <ComboBox Grid.Column="1" Style="{StaticResource FlatComboBoxStyle}" Height="30" SelectedValuePath="FullId" DisplayMemberPath="DisplayName" ItemsSource="{Binding PluginActionOptions}" SelectedValue="{Binding SelectedPluginActionFullId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="同一插件的动作归入以该插件名命名的分组">
+                        <ComboBox.GroupStyle>
+                          <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                              <DataTemplate>
+                                <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimaryBrush}" Margin="4,6,0,3" />
+                              </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                          </GroupStyle>
+                        </ComboBox.GroupStyle>
+                      </ComboBox>
+                    </Grid>
+                    <TextBlock FontSize="11" TextWrapping="Wrap" Foreground="#D97706" Margin="0,0,0,10" Visibility="{Binding IsPluginActionBroken, Converter={StaticResource BoolToVis}}" Text="⚠️ 原先引用的插件动作已不可用（插件可能已被停用或卸载），请重新选择。" />
+
                     <!-- (1) 热键面板 -->
                     <StackPanel Visibility="{Binding IsHotkeyType, Converter={StaticResource BoolToVis}}">
                       <Grid>

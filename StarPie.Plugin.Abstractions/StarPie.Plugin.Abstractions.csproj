@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    StarPie 插件 SDK（契约程序集）
+    ==================================================================
+    铁律 1：本程序集**只允许包含** 接口 / 枚举 / DTO / 常量。
+            绝不允许引入任何 NuGet 依赖，也绝不允许引用主程序 StarPie.dll。
+    铁律 2：接口只增不改不删。破坏性变更必须提升 PluginApi.ApiVersionMajor。
+    铁律 3：TFM 必须保持为最低可用的 net8.0-windows，以便社区插件以最低门槛引用；
+            宿主自身的 net8.0-windows10.0.19041.0 可以向下引用本程序集。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+
+    <!-- 程序集身份：插件的 PluginLoadContext 依赖这个名字做“共享程序集放行”判定，改名等于破坏全部插件 -->
+    <AssemblyName>StarPie.Plugin.Abstractions</AssemblyName>
+    <RootNamespace>StarPie.Plugin</RootNamespace>
+
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>StarPie Plugin SDK</Product>
+    <Company>StarPie Studio</Company>
+    <Description>StarPie 插件契约程序集（SDK）：插件与宿主之间唯一允许共享的类型边界。</Description>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 契约文件里大量自解释的成员，不强制每条都写 XML 注释 -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Q3 决策：提供官方 NuGet 包（插件侧引入，不影响宿主零依赖红线） -->
+    <IsPackable>true</IsPackable>
+    <PackageId>StarPie.Plugin.Abstractions</PackageId>
+    <Authors>SoftBlack42</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/SoftBlack42/StarPie</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/SoftBlack42/StarPie</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>

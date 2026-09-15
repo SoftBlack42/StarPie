@@ -384,6 +384,23 @@ public class AppConfig
 
 	/// <summary>OCR 截屏文字识别引擎全局配置</summary>
 	public OcrSettings OcrConfig { get; set; } = new OcrSettings();
+
+	/// <summary>
+	/// 插件系统偏好。只放用户偏好，插件启停状态在 plugin-data\registry.json（理由见 PluginsPreference 注释）。
+	/// 给了默认值实例，保证旧配置升级后无需任何迁移即可直接使用。
+	/// </summary>
+	public PluginsPreference Plugins { get; set; } = new PluginsPreference();
+
+	/// <summary>
+	/// 未知字段兜底容器。
+	/// <para>
+	/// 反序列化时主程序会静默丢弃不认识的键。如果没有这个兜底，一旦配置里出现了当前版本读不懂的内容
+	/// （新版写入的、或插件联动产生的），「打开一次再保存」就会把它们永久抹掉。
+	/// 有了它，未知内容会被原样保留并写回，这是插件生态里代价最低、收益最高的一条向后兼容措施。
+	/// </para>
+	/// </summary>
+	[System.Text.Json.Serialization.JsonExtensionData]
+	public Dictionary<string, System.Text.Json.JsonElement>? Extras { get; set; }
 }
 
 public class OcrSettings

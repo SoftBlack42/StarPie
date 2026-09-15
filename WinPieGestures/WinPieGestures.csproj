@@ -23,6 +23,16 @@
     <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8604;CS8618;CS8625;CS0169;CS0649;CS4014;WFAC010</NoWarn>
   </PropertyGroup>
 
+  <!--
+    插件 SDK 契约程序集。
+    铁律：主程序引用 SDK，SDK 绝不引用主程序 —— 这个引用方向是「插件禁止引用 StarPie.dll」的物理保证。
+    必须随主程序一起发布（默认 CopyLocal），插件才能与宿主共享同一份类型身份；
+    若插件目录里出现第二份 Abstractions.dll，会造成类型身份分裂，所有强转都会失败。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\StarPie.Plugin.Abstractions\StarPie.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <Resource Include="app_icon.ico" />
     <Resource Include="tray_icon.ico" />

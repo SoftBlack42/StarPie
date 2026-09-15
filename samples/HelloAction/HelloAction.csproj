@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    StarPie 官方示例插件：HelloAction
+    ==================================================================
+    这是社区插件的**参考模板**。它刻意演示了 P0 阶段可以做的全部事情：
+      · 注册自定义动作（IActionRegistry）
+      · 声明参数表单，由宿主渲染（ParameterField / 参数 Schema）
+      · 注册多语言词条（II18nRegistry）
+      · 注册矢量图标（IIconRegistry）
+      · 通过宿主已验证的服务开文件夹，而不是自己 Process.Start（IHostActionInvoker）
+      · 订阅宿主事件并持有 token（IPluginEvents）
+      · 诚实声明能力 + 实现幂等的 Shutdown
+
+    有三条配置是**必须照抄**的，改错任何一条都会导致插件在 StarPie 里加载失败：
+
+    1. TargetFramework 不得高于宿主（net8.0-windows / net8.0-windows10.0.19041.0 都可以），
+       也不能是 net9.0+。宿主会直接读程序集的 TargetFrameworkAttribute 去核对。
+    2. ProjectReference 必须设 Private=false ——
+       否则构建产物里会多出一份 StarPie.Plugin.Abstractions.dll，
+       加载时会出现两份 IStarPiePlugin 类型身份，强转全部失败。
+    3. 只能引用 StarPie.Plugin.Abstractions 与 BCL。
+       **绝对不要引用主程序 StarPie.dll** —— 那会把插件绑死在宿主内部类型签名上。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+
+    <AssemblyName>StarPie.Plugin.HelloAction</AssemblyName>
+    <RootNamespace>StarPie.Plugin.HelloAction</RootNamespace>
+
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>StarPie HelloAction 示例插件</Product>
+    <Company>StarPie Studio</Company>
+    <Description>演示 StarPie 插件 SDK 的最小可用形态：自定义动作、参数表单、图标与多语言。</Description>
+
+    <!-- 宿主是 x64，插件跟随；AnyCPU 纯托管程序集同样被接受 -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Private=false：不把 SDK 程序集复制到输出目录。
+      这一行是「避免类型身份分裂」的关键，请勿删除。
+    -->
+    <ProjectReference Include="..\..\StarPie.Plugin.Abstractions\StarPie.Plugin.Abstractions.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!--
+    程序集元数据：让「裸 DLL」分发形态也能被识别。
+    如果插件目录里带了 plugin.json（推荐），宿主优先用它，这里的元数据只作为兜底与自描述。
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="StarPiePluginId" Value="com.example.hello" />
+    <AssemblyMetadata Include="StarPiePluginName" Value="Hello 示例插件" />
+    <AssemblyMetadata Include="StarPiePluginCapabilities" Value="Process;Ui" />
+    <AssemblyMetadata Include="StarPiePluginLicense" Value="MIT" />
+    <AssemblyMetadata Include="StarPiePluginHomepage" Value="https://github.com/SoftBlack42/StarPie" />
+  </ItemGroup>
+
+  <!-- 清单与图标随产物一起落地，使「输出目录」本身就是可分发的插件文件夹 -->
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="plugin.schema.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

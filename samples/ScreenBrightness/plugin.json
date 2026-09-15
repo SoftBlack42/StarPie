@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+
+  "id": "com.example.screenbrightness",
+  "name": "屏幕亮度调节",
+  "description": "用鼠标轮盘直接调屏幕亮度。外接显示器走 DDC/CI 协议，笔记本内置屏走 WMI，两条通道会同时尝试，因此内屏外屏可以一起调。",
+  "author": "StarPie Community",
+  "homepage": "https://github.com/SoftBlack42/StarPie",
+  "license": "MIT",
+  "version": "1.0.0",
+
+  "apiVersion": "1.0",
+  "minHostVersion": "1.7.4",
+
+  "targetFramework": "net8.0-windows",
+  "platform": "win-x64",
+
+  "assembly": "StarPie.Plugin.ScreenBrightness.dll",
+  "entryType": "StarPie.Plugin.ScreenBrightness.ScreenBrightnessPlugin",
+
+  "capabilities": ["Process", "Ui"],
+
+  "contributions": {
+    "actions": true,
+    "icons": true,
+    "i18n": true
+  },
+
+  "tags": ["屏幕", "亮度", "护眼", "显示器", "DDC/CI"]
+}

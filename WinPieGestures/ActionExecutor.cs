@@ -324,6 +324,13 @@ public static class ActionExecutor
 			case "ShellTool":
 				ExecuteShellTool(action.Parameter);
 				break;
+			case "Plugin":
+				// 【插件系统 · 唯一的执行接缝】
+				// 插件动作统一持久化为 Type="Plugin"，靠 action.PluginActionRef 分发。
+				// PluginHost.ExecutePluginAction 内部保证不抛异常：绝不能让插件异常冒泡到本方法末尾的
+				// catch —— 那里会弹 MessageBox，在无人值守时会把整个动作线程卡死在弹窗上。
+				ExecutePluginActionItem(action);
+				break;
 			}
 		}
 		catch (Exception ex)
@@ -331,6 +338,41 @@ public static class ActionExecutor
 			AppLogger.LogError($"Failed to execute action '{action.Name}' (Type: {action.Type}, Param: {action.Parameter})", ex);
 			MessageBox.Show("Failed to execute action '" + action.Name + "': " + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Hand);
 		}
+	}
+
+	/// <summary>
+	/// 插件动作的执行包装。
+	/// <para>
+	/// 刻意做成独立方法而不是直接写在 <c>switch</c> 里，有两个原因：
+	/// ① 让「主程序唯一的插件接缝」在代码里一眼可见、可搜索；
+	/// ② 所有失败都走 <see cref="AppLogger"/> + 托盘气泡，而<b>不是</b> MessageBox ——
+	///    插件是社区代码，它的失败必须可诊断、可忽略，绝不能打断用户。
+	/// </para>
+	/// </summary>
+	private static void ExecutePluginActionItem(ActionItem action)
+	{
+		Plugins.PluginExecuteOutcome outcome = Plugins.PluginHost.ExecutePluginAction(action);
+
+		if (!outcome.Handled)
+		{
+			AppLogger.LogWarn($"Plugin action not handled: Name='{action.Name}', Ref='{action.PluginActionRef}'");
+			return;
+		}
+
+		if (outcome.QueuedToBackground)
+		{
+			AppLogger.LogInfo($"Plugin action queued to background: {action.PluginActionRef}, Name='{action.Name}'");
+			return;
+		}
+
+		if (outcome.Success)
+		{
+			AppLogger.LogInfo($"Plugin action succeeded: {action.PluginActionRef}");
+			return;
+		}
+
+		AppLogger.LogWarn($"Plugin action failed: {action.PluginActionRef}, Reason='{outcome.Message}'");
+		Plugins.PluginHost.NotifyUser("插件动作执行失败", outcome.Message);
 	}
 
 	public static bool TryToggleProcessWindow(string processOrExePath)
@@ -551,7 +593,7 @@ public static class ActionExecutor
 		return null;
 	}
 
-	private static void ExecuteWebUrl(string url, string? browserChoice, string? customBrowserPath)
+	internal static void ExecuteWebUrl(string url, string? browserChoice, string? customBrowserPath)
 	{
 		if (string.IsNullOrWhiteSpace(url))
 		{
@@ -647,7 +689,7 @@ public static class ActionExecutor
 		}
 	}
 
-	private static void SafeSetClipboardText(string text)
+	internal static void SafeSetClipboardText(string text)
 	{
 		if (string.IsNullOrEmpty(text))
 		{
@@ -1075,7 +1117,7 @@ public static class ActionExecutor
 		return paths.FirstOrDefault(File.Exists) ?? "WinRAR.exe";
 	}
 
-	private static void ExecuteFolder(string folderPath)
+	internal static void ExecuteFolder(string folderPath)
 	{
 		if (string.IsNullOrWhiteSpace(folderPath))
 		{
@@ -1155,7 +1197,7 @@ public static class ActionExecutor
 		}
 	}
 
-	private static void ExecuteLaunch(string path, string arguments, bool runAsStandardUser = false)
+	internal static void ExecuteLaunch(string path, string arguments, bool runAsStandardUser = false)
 	{
 		if (string.IsNullOrWhiteSpace(path))
 		{
@@ -1526,7 +1568,7 @@ public static class ActionExecutor
 		}
 	}
 
-	private static void ExecuteHotkey(string hotkeyString)
+	internal static void ExecuteHotkey(string hotkeyString)
 	{
 		if (string.IsNullOrWhiteSpace(hotkeyString))
 		{

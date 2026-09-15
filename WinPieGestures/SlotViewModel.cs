@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows.Media;
+using WinPieGestures.Plugins;
 
 namespace WinPieGestures;
 
@@ -811,7 +812,11 @@ public class SlotViewModel : INotifyPropertyChanged, IDisposable
 		new ActionTypeItem { Tag = "WindowManager", DisplayText = "🪟 " + I18n.T("ActionTypeWindowManagerShort") },
 		new ActionTypeItem { Tag = "ShellTool", DisplayText = "⚡ " + I18n.T("ActionTypeShellToolShort") },
 		new ActionTypeItem { Tag = "System", DisplayText = "⚙️ " + I18n.T("ActionTypeSystemShort") }
-	};
+	}
+	// 插件动作追加在内置动作之后：内置项的顺序属于用户的肌肉记忆，不应被打乱。
+	// 插件系统关闭 / 未安装插件时返回的只是那个兜底项，行为与从前完全一致。
+	.Concat(PluginActionBinding.BuildActionTypeItems())
+	.ToList();
 
 	public static List<ActionTypeItem> LocalizedActionTypes => new List<ActionTypeItem>
 	{
@@ -880,7 +885,9 @@ public class SlotViewModel : INotifyPropertyChanged, IDisposable
 			Tag = "System",
 			DisplayText = "⚙️ " + I18n.T("ActionTypeSystemShort")
 		}
-	};
+	}
+	.Concat(PluginActionBinding.BuildActionTypeItems())
+	.ToList();
 
 	/// <summary>Localized terminal options (shared by the sub-action editor).</summary>
 	public static List<ActionTypeItem> LocalizedTerminals => new List<ActionTypeItem>

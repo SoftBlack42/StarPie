@@ -1,0 +1,225 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/SoftBlack42/StarPie/schemas/plugin.schema.json",
+  "title": "StarPie 插件清单",
+  "description": "plugin.json 的结构定义。宿主在识别 .dll 时会先静态读取该清单（不存在时回落到程序集元数据），字段写错会直接导致插件被拒绝并在报告里给出原因码。",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "version",
+    "apiVersion",
+    "minHostVersion",
+    "targetFramework",
+    "platform"
+  ],
+
+  "properties": {
+    "schemaVersion": {
+      "description": "清单结构版本。当前只接受 1。",
+      "type": "integer",
+      "enum": [1]
+    },
+
+    "id": {
+      "description": "插件唯一标识，必须是小写反向域名（至少含一个点），且不得使用保留前缀 starpie / winpiegestures / windows / microsoft / system / builtin。一旦发布不建议再改，因为用户配置里保存的是这个 ID。",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 128,
+      "not": {
+        "pattern": "^(starpie|winpiegestures|windows|microsoft|system|builtin)(\\.|$)"
+      }
+    },
+
+    "name": {
+      "description": "展示名称，会出现在安装确认卡、插件列表与动作名称里。",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+
+    "description": {
+      "description": "一句话说明插件做什么。",
+      "type": "string",
+      "maxLength": 512,
+      "default": ""
+    },
+
+    "author": {
+      "description": "作者或组织名。",
+      "type": "string",
+      "maxLength": 128,
+      "default": ""
+    },
+
+    "homepage": {
+      "description": "项目主页或仓库地址。",
+      "type": "string",
+      "maxLength": 512
+    },
+
+    "license": {
+      "description": "SPDX 许可证标识。",
+      "type": "string",
+      "maxLength": 64,
+      "default": "MIT"
+    },
+
+    "version": {
+      "description": "插件自身版本，语义化版本（major.minor.patch，可带 -prerelease）。",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?(-[0-9A-Za-z.\\-]+)?$",
+      "default": "1.0.0"
+    },
+
+    "apiVersion": {
+      "description": "所依赖的插件 SDK 契约版本。主版本号必须与宿主一致，否则拒绝加载。",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+      "default": "1.0"
+    },
+
+    "minHostVersion": {
+      "description": "要求的最低 StarPie 版本。宿主为同版本号的预发布版（如宿主 1.7.4-beta.2 对 ≥1.7.4）时同样视为满足，方便插件作者在 beta 通道上开发调试。",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?(-[0-9A-Za-z.\\-]+)?$",
+      "default": "0.0.0"
+    },
+
+    "maxHostVersion": {
+      "description": "可选。允许运行的最高 StarPie 版本，用于标记「已知在更高版本上会失效」的插件。留空表示不设上限。",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?(-[0-9A-Za-z.\\-]+)?$"
+    },
+
+    "targetFramework": {
+      "description": "编译时的目标框架。必须为 Windows 平台且不得高于宿主的 net8.0-windows10.0.19041.0；net8.0-windows 或 net8.0-windows7.0 均可，net9.0+ 会被拒绝。",
+      "type": "string",
+      "pattern": "^net\\d+\\.\\d+-windows(\\d+(\\.\\d+)*)?$",
+      "default": "net8.0-windows"
+    },
+
+    "platform": {
+      "description": "目标平台。当前宿主只有 x64 构建，因此只接受 win-x64。",
+      "type": "string",
+      "enum": ["win-x64"],
+      "default": "win-x64"
+    },
+
+    "assembly": {
+      "description": "入口程序集文件名（相对插件目录）。留空时宿主会在目录内查找唯一符合契约的 DLL。",
+      "type": "string",
+      "pattern": "^[^/\\\\]+\\.dll$",
+      "maxLength": 260
+    },
+
+    "entryType": {
+      "description": "实现 StarPie.Plugin.IStarPiePlugin 的入口类型全名（含命名空间）。建议显式填写：留空时宿主需要遍历类型表去找，既慢又可能有歧义。",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "maxLength": 512
+    },
+
+    "capabilities": {
+      "description": "能力声明。它不会限制插件（本版不启用 CLR 沙箱），而是在安装确认卡上如实告知用户这个插件会做什么。请诚实声明：宁可多写，不要漏写。",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "None",
+          "Process",
+          "FileSystem",
+          "Network",
+          "Clipboard",
+          "Registry",
+          "GlobalHook",
+          "Ui",
+          "Admin"
+        ]
+      },
+      "default": []
+    },
+
+    "contributions": {
+      "description": "贡献点声明，用于生成安装前的「这个插件会往轮盘里加什么」摘要。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "description": "提供可绑定到轮盘扇区的自定义动作。",
+          "type": "boolean",
+          "default": false
+        },
+        "icons": {
+          "description": "提供矢量图标包（SVG）。",
+          "type": "boolean",
+          "default": false
+        },
+        "i18n": {
+          "description": "注册多语言词条。",
+          "type": "boolean",
+          "default": false
+        },
+        "styles": {
+          "description": "提供轮盘渲染形态（P1，当前宿主会忽略并给出提示）。",
+          "type": "boolean",
+          "default": false
+        },
+        "presets": {
+          "description": "提供预设方案或配置模板（P1，当前宿主会忽略并给出提示）。",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+
+    "dependencies": {
+      "description": "对其他插件或外部运行时的依赖。首版仅做提示，不做自动解析与安装。",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "description": "依赖的插件 ID。",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "versionRange": {
+            "description": "版本区间，如 \"1.2.0\" 或 \"*\"。",
+            "type": "string",
+            "maxLength": 64,
+            "default": "*"
+          }
+        }
+      },
+      "default": []
+    },
+
+    "icon": {
+      "description": "插件在列表里显示的图标文件名（PNG/ICO/SVG，相对插件目录）。",
+      "type": "string",
+      "maxLength": 260
+    },
+
+    "tags": {
+      "description": "检索用标签。",
+      "type": "array",
+      "items": { "type": "string", "maxLength": 32 },
+      "maxItems": 16,
+      "default": []
+    },
+
+    "sha256": {
+      "description": "入口程序集的 SHA256（小写十六进制）。填写后宿主会在识别阶段做完整性校验，不匹配即拒绝加载，可防止分发包在途损坏或被篡改。",
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

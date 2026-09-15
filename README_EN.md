@@ -281,6 +281,34 @@ Action execution and display icons are fully decoupled — the same action can i
   <img src="./attachments/系统内置更新与贡献展示.gif" width="680" alt="Built-in updater & contributor showcase demo" />
 </div>
 
+### 16. 🧩 Plugin System (Community Extensions, In-Process)
+
+- **Two ways to install**: drop a plugin `.dll` into the **`plugin` folder next to the executable** and hit
+  "Rescan", then click Install on the candidate card; or pick the file directly via "Install Plugin (.dll)" in settings.
+- **⚠️ A `.dll` in `plugin\` brings only itself**: other files in the plugin package (icons, resources,
+  dependency DLLs) are *not* copied along. For a **full-package install**, use "Install Plugin (.dll)" and select
+  the `.dll` that sits next to a `plugin.json` — once the manifest is detected the host copies the whole folder.
+- **Two directories with separate responsibilities**:
+
+  | Directory | Role |
+  | :--- | :--- |
+  | `<install dir>\plugin\` | **Read-only source area**: candidates shipped with the release, flat, `.dll` only. StarPie **never creates, writes or deletes** anything here |
+  | `%LOCALAPPDATA%\StarPie\plugin-data\` | **Writable data area**: installed copies, enable state and per-plugin data. Fully removed on uninstall |
+
+- **Install and enable are separate steps**: a freshly installed plugin stays "installed but disabled" until you
+  tick it. This keeps "copying a file in" from being equivalent to "letting its code run". The confirmation card
+  shows the ID, version, author, target framework, architecture, SHA256, signature status and declared capabilities.
+- **Candidate cards state their conclusion outright**: installable / newer version / older version / already
+  installed / content changed / duplicate ID / unrecognised. If two files declare the same ID, both are flagged as
+  duplicates and neither can be installed.
+- **Fail-safe by default**: a single plugin that fails to load or keeps throwing is isolated and never affects the
+  host; two consecutive abnormal startups switch on safe mode and temporarily disable the suspect plugins.
+- **For plugin authors**: `samples/` contains two reference projects (`HelloAction` as the template,
+  `ScreenBrightness` covering P/Invoke, COM and slow I/O). For debugging, run
+  `StarPie.exe --plugin-selftest <plugin.dll> [report path] [--skip-invoke]` to exercise the whole chain inside a
+  temporary sandbox without touching your installed plugins, or `StarPie.exe --plugin-paths` to inspect the
+  effective directories.
+
 ---
 
 ## <a id="download"></a>🚀 Quick Start & Download
@@ -368,6 +396,7 @@ StarPie/
 │   ├── GestureTrailOverlay.cs       # Trail rendering & release hint overlay
 │   ├── RadialWindow.xaml(.cs)       # Transparent wheel window & runtime rendering
 │   ├── SettingsWindow.xaml(.cs)     # Two-pane canvas, focused editing & system settings
+│   ├── Plugin/                      # Plugin host (load context, scanning, registration, parameter forms, self-test)
 │   ├── WindowTaskbarHelper.cs       # Taskbar order, window icons & switching snapshots
 │   ├── WindowTiler.cs               # Window tiling, restore, cycling & cross-screen control
 │   ├── WindowPickerWindow.xaml(.cs) # Active window & process capture tool
@@ -381,6 +410,8 @@ StarPie/
 │   ├── ConfigManager.cs             # Config persistence, import/export & autostart
 │   ├── IconHelper.cs                # Built-in / program / custom icon resolution
 │   └── WinPieGestures.csproj        # .NET 8 WPF project configuration
+├── StarPie.Plugin.Abstractions/     # Plugin SDK contract (the only StarPie assembly a plugin may reference)
+├── samples/                         # Sample plugins (reference template + P/Invoke / COM / slow I/O stress cases)
 ├── releases/                        # Historical versions & release archive
 ├── attachments/                     # README screenshots, GIFs & pending demo assets
 ├── tests/                           # pywinauto GUI automation tests

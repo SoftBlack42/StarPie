@@ -29,6 +29,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32;
+using WinPieGestures.Plugins;
 
 namespace WinPieGestures;
 
@@ -178,6 +179,12 @@ public partial class SettingsWindow : Window
 	private List<ActionItem>? _lastSubActionsBackup = null;
 	private int _lastSubActionsBackupSlotIndex = -1;
 	private bool _isUpdatingFocusUi = true;
+
+	/// <summary>
+	/// 插件动作的参数表单。按需创建 —— 绝大多数动作没有参数，
+	/// 为它们提前维持一份控件树只是白占内存。
+	/// </summary>
+	private PluginParameterForm? _focusPluginParameterForm;
 	private Point? _mappingsDragStartPos = null;
 	private int _dragSourceSlotIndex = -999; // -1: Center Core, >=0: Sector slot
 	private bool _isDraggingSlot = false;
@@ -2602,17 +2609,18 @@ public partial class SettingsWindow : Window
 
 	public void SwitchToTab(int index)
 	{
-		if (TriggerSettingsGrid == null || AppearanceSettingsGrid == null || MappingsSettingsGrid == null || SystemSettingsGrid == null || AboutSettingsGrid == null)
+		if (TriggerSettingsGrid == null || AppearanceSettingsGrid == null || MappingsSettingsGrid == null || SystemSettingsGrid == null || AboutSettingsGrid == null || PluginsSettingsGrid == null)
 		{
 			return;
 		}
-		index = Math.Clamp(index, 0, 4);
+		index = Math.Clamp(index, 0, 5);
 		_lastSelectedTabIndex = index;
 		TriggerSettingsGrid.Visibility = ((index != 0) ? Visibility.Collapsed : Visibility.Visible);
 		AppearanceSettingsGrid.Visibility = ((index != 1) ? Visibility.Collapsed : Visibility.Visible);
 		MappingsSettingsGrid.Visibility = ((index != 2) ? Visibility.Collapsed : Visibility.Visible);
 		SystemSettingsGrid.Visibility = ((index != 3) ? Visibility.Collapsed : Visibility.Visible);
 		AboutSettingsGrid.Visibility = ((index != 4) ? Visibility.Collapsed : Visibility.Visible);
+		PluginsSettingsGrid.Visibility = ((index != 5) ? Visibility.Collapsed : Visibility.Visible);
 		_isUpdatingUi = true;
 		try
 		{
@@ -2636,10 +2644,20 @@ public partial class SettingsWindow : Window
 			{
 				NavTab4.IsChecked = index == 4;
 			}
+			if (NavTab5 != null)
+			{
+				NavTab5.IsChecked = index == 5;
+			}
 		}
 		finally
 		{
 			_isUpdatingUi = false;
+		}
+		if (index == 5)
+		{
+			// 进入插件页时重新与磁盘对一次账：用户可能在资源管理器里手工拷入了新插件，
+			// 也可能直接删掉了某个插件目录。不重扫的话界面会显示陈旧状态。
+			RefreshPluginManagerUi(resyncFromDisk: true);
 		}
 		switch (index)
 		{
@@ -5052,7 +5070,11 @@ public partial class SettingsWindow : Window
 			bool isWindowManager = type == "Tile" || type == "ToggleTopmost" || type == "MoveMonitor" || type == "WindowOpacity" || type == "SwitchWindow";
 			if (FocusActionTypeComboBox != null)
 			{
-				string targetTag = isWindowManager ? "WindowManager" : type;
+				// 插件动作在类型下拉里就投影成它自己（只有这一项）；
+				// 具体是哪一个动作由下方的子下拉承载，见 RefreshFocusPluginActionComboBox。
+				string targetTag = type == PluginActionBinding.TypeName
+					? PluginActionBinding.TypeName
+					: (isWindowManager ? "WindowManager" : type);
 				UpdateFocusActionTypeItemsSource(targetTag);
 				if (FocusActionTypeComboBox.ItemsSource is IEnumerable<ActionTypeItem> typeItems)
 				{
@@ -5076,6 +5098,11 @@ public partial class SettingsWindow : Window
 			if (FocusWindowManagerPanel != null) FocusWindowManagerPanel.Visibility = isWindowManager ? Visibility.Visible : Visibility.Collapsed;
 			if (FocusSystemPanel != null) FocusSystemPanel.Visibility = type == "System" ? Visibility.Visible : Visibility.Collapsed;
 			if (FocusOcrPanel != null) FocusOcrPanel.Visibility = (type == "Ocr" || type == "ScreenOcr") ? Visibility.Visible : Visibility.Collapsed;
+			if (FocusPluginPanel != null) FocusPluginPanel.Visibility = (type == PluginActionBinding.TypeName) ? Visibility.Visible : Visibility.Collapsed;
+			if (type == PluginActionBinding.TypeName) RefreshFocusPluginPanel(displayItem);
+
+			// 插件动作子下拉（按插件分组）。非插件类型时由该方法自行隐藏并清空。
+			RefreshFocusPluginActionComboBox(displayItem);
 			if (FocusShellToolPanel != null)
 			{
 				FocusShellToolPanel.Visibility = (type == "ShellTool") ? Visibility.Visible : Visibility.Collapsed;
@@ -5775,6 +5802,890 @@ public partial class SettingsWindow : Window
 		}
 	}
 
+	/// <summary>
+	/// 刷新焦点编辑器的「插件动作」子下拉（按插件分组）。
+	/// <para>
+	/// 候选集合每次重建，以便在插件管理页里启用 / 停用一个插件后立刻反映到这里。
+	/// 重建会让下拉框短暂把 <c>SelectedValue</c> 置空，因此整段用
+	/// <c>_isUpdatingFocusUi</c> 包住 —— 否则那次置空会被 SelectionChanged 当成
+	/// 用户的选择，把已配好的动作清掉。
+	/// </para>
+	/// </summary>
+	private void RefreshFocusPluginActionComboBox(ActionItem item)
+	{
+		if (FocusPluginActionComboBox == null || FocusPluginActionRow == null) return;
+
+		bool isPlugin = item.Type == PluginActionBinding.TypeName;
+		if (!isPlugin)
+		{
+			FocusPluginActionRow.Visibility = Visibility.Collapsed;
+			FocusPluginActionComboBox.ItemsSource = null;
+			return;
+		}
+
+		FocusPluginActionRow.Visibility = Visibility.Visible;
+
+		bool oldUpdating = _isUpdatingFocusUi;
+		try
+		{
+			_isUpdatingFocusUi = true;
+			FocusPluginActionComboBox.ItemsSource = PluginActionBinding.BuildPluginActionView();
+
+			// 引用失效（插件停用 / 卸载）时 ProjectSelectedAction 会返回 null，
+			// 下拉框显示为未选中；具体原因由下方的插件面板如实说明。
+			FocusPluginActionComboBox.SelectedValue = PluginActionBinding.ProjectSelectedAction(item);
+		}
+		finally
+		{
+			_isUpdatingFocusUi = oldUpdating;
+		}
+	}
+
+	/// <summary>
+	/// 用户在子下拉里选定了一个具体的插件动作。
+	/// <para>
+	/// 这里刻意不复用 <c>UpdateFocusEditorUi</c> 之外的路径：<c>Apply</c> 在「名称 / 图标尚未
+	/// 自定义」时会自动填充，必须整体刷新一次界面对齐，否则名称框会停在旧动作的名字上。
+	/// </para>
+	/// </summary>
+	private void FocusPluginActionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+	{
+		if (_isUpdatingUi || _isUpdatingFocusUi || !_isUiInitialized || _isUiInitializing) return;
+		if (FocusPluginActionComboBox == null) return;
+
+		ActionItem? item = GetCurrentFocusActionItem();
+		if (item == null || item.Type != PluginActionBinding.TypeName) return;
+
+		if (FocusPluginActionComboBox.SelectedValue is not string fullId || string.IsNullOrWhiteSpace(fullId)) return;
+
+		// 写失败说明插件刚好被停用 / 卸载 —— 保持原配置不动，重新拉一次候选让界面回到真实状态。
+		if (!PluginActionBinding.Apply(item, fullId))
+		{
+			RefreshFocusPluginActionComboBox(item);
+			return;
+		}
+
+		UpdateFocusEditorUi();
+		ScheduleAutoSave();
+	}
+
+	/// <summary>
+	/// 刷新焦点编辑器中的「插件动作」面板：动作信息 + 参数表单 + 参数校验结论。
+	/// <para>
+	/// 参数表单完全由插件声明的 <see cref="StarPie.Plugin.ParameterField"/> 驱动，
+	/// 插件不提供 XAML —— 深浅色对比度、字体、圆角因此都由宿主统一保证，
+	/// 主程序改版也不会让插件界面错位。
+	/// </para>
+	/// </summary>
+	private void RefreshFocusPluginPanel(ActionItem item)
+	{
+		if (FocusPluginTitleText == null || FocusPluginDetailText == null) return;
+
+		StarPie.Plugin.PluginActionRef? reference = item.PluginActionRef;
+		if (reference == null || !reference.IsValid)
+		{
+			FocusPluginTitleText.Text = "🔌 " + I18n.T("ActionTypePluginShort");
+			// 区分「还没选」与「根本没得选」：前者引导去下拉里挑，
+			// 后者让用户对着一个空下拉框找，只会让人以为功能坏了。
+			FocusPluginDetailText.Text = PluginActionBinding.BuildPluginActionItems().Count > 0
+				? "尚未选定具体的插件动作。请在上方「插件动作」下拉框中选择 —— " +
+				  "候选动作按插件分组，同一插件的动作都归在它以自己名字命名的那个分组下。"
+				: "当前没有可用的插件动作。请先到「插件与扩展」页安装并启用插件，再回到这里选择。";
+			if (FocusPluginParamsHintText != null) FocusPluginParamsHintText.Visibility = Visibility.Collapsed;
+			if (FocusPluginReloadBtn != null) FocusPluginReloadBtn.Visibility = Visibility.Collapsed;
+			ClearFocusPluginParameterForm();
+			return;
+		}
+
+		if (!PluginHost.TryGetAction(reference.FullId, out PluginActionRegistration registration))
+		{
+			// 引用还在、贡献点却没了 —— 最常见的是插件被停用/卸载，或插件升级后不再提供该动作。
+			FocusPluginTitleText.Text = "🔌 " + I18n.T("ActionTypePluginShort");
+			FocusPluginDetailText.Text =
+				$"所引用的插件动作当前不可用：{reference.FullId}\n" +
+				"可能是该插件已被停用或卸载，也可能是插件升级后移除了这个动作。\n" +
+				"到「插件与扩展」页确认插件状态，或直接在上方「插件动作」下拉框里改选另一个动作。";
+			if (FocusPluginParamsHintText != null)
+			{
+				FocusPluginParamsHintText.Text = "⚠️ 触发时会明确提示「插件动作不可用」，不会静默无操作。";
+				FocusPluginParamsHintText.Visibility = Visibility.Visible;
+			}
+			if (FocusPluginReloadBtn != null) FocusPluginReloadBtn.Visibility = Visibility.Visible;
+			ClearFocusPluginParameterForm(keepHintText: true);
+			return;
+		}
+
+		FocusPluginTitleText.Text = "🔌 " + registration.DisplayName;
+
+		var detail = new System.Text.StringBuilder();
+		// 插件名与子下拉的分组标题保持一致，用户才能把两处对上号；ID 另行标注，
+		// 排查问题时仍然需要它。
+		detail.Append("提供插件：").Append(PluginActionBinding.ResolvePluginDisplayName(registration.PluginId));
+		if (!string.Equals(
+				PluginActionBinding.ResolvePluginDisplayName(registration.PluginId),
+				registration.PluginId,
+				StringComparison.Ordinal))
+		{
+			detail.Append("（").Append(registration.PluginId).Append('）');
+		}
+		detail.Append("　|　执行方式：").Append(registration.Kind == StarPie.Plugin.ActionKind.Background
+			? "后台并发（不占用动作线程）"
+			: "串行（占用动作线程）");
+		if (registration.TimeoutSeconds > 0)
+		{
+			detail.Append("　|　超时：").Append(registration.TimeoutSeconds).Append(" 秒");
+		}
+		detail.Append('\n').Append("贡献点 ID：").Append(registration.FullId);
+		if (!string.IsNullOrWhiteSpace(registration.Description))
+		{
+			detail.Append('\n').Append(registration.Description);
+		}
+		FocusPluginDetailText.Text = detail.ToString();
+
+		BuildFocusPluginParameterForm(registration);
+
+		if (FocusPluginReloadBtn != null) FocusPluginReloadBtn.Visibility = Visibility.Visible;
+	}
+
+	/// <summary>按插件的字段声明重建参数表单。</summary>
+	private void BuildFocusPluginParameterForm(PluginActionRegistration registration)
+	{
+		if (FocusPluginParamsPanel == null) return;
+
+		PluginParameterForm form = EnsureFocusPluginParameterForm();
+		form.Build(registration.Parameters, registration.PluginId);
+
+		bool hasFields = !form.IsEmpty;
+		FocusPluginParamsPanel.Visibility = hasFields ? Visibility.Visible : Visibility.Collapsed;
+
+		if (FocusPluginParamsHintText != null)
+		{
+			if (hasFields)
+			{
+				// 布尔项不计入必填提示：它未填即视为 false，不存在「留空被拦」的问题，
+				// 把它算进去会让用户以为有个开关必须先动一下才能保存。
+				int requiredCount = registration.Parameters.Count(
+					p => p.Required && p.Type != StarPie.Plugin.ParameterFieldType.Bool);
+
+				FocusPluginParamsHintText.Text = requiredCount > 0
+					? $"此动作有 {requiredCount} 个必填参数，留空会在触发时被拦下。"
+					: "此动作的参数全部可选。";
+				FocusPluginParamsHintText.Visibility = Visibility.Visible;
+			}
+			else
+			{
+				FocusPluginParamsHintText.Visibility = Visibility.Collapsed;
+			}
+		}
+
+		RefreshFocusPluginValidation();
+	}
+
+	/// <summary>
+	/// 刷新参数校验结论。
+	/// <para>
+	/// 走 <see cref="PluginHost.ValidateActionParameters"/> —— 与用户真正触发轮盘时同一个入口，
+	/// 因此界面上显示的结论与触发时的判断必然一致，不会出现
+	/// 「这里看着没问题、一触发就说参数不合法」。
+	/// </para>
+	/// </summary>
+	private void RefreshFocusPluginValidation()
+	{
+		if (FocusPluginValidationText == null) return;
+
+		try
+		{
+			PluginHost.PluginActionValidation validation =
+				PluginHost.ValidateActionParameters(GetCurrentFocusActionItem());
+
+			// 字段级错误交给表单就地标红，此处只给「字段之外的结论」+ 未通过字段的计数，
+			// 免得同一条信息在界面上出现两遍。
+			_focusPluginParameterForm?.ShowIssues(validation.DeclaredIssues);
+
+			string? message = validation.PluginMessage;
+			if (message == null && validation.DeclaredIssues.Count > 0)
+			{
+				message = $"还有 {validation.DeclaredIssues.Count} 个参数不合法，触发时会被拦下。";
+			}
+
+			if (string.IsNullOrWhiteSpace(message))
+			{
+				FocusPluginValidationText.Text = "";
+				FocusPluginValidationText.Visibility = Visibility.Collapsed;
+			}
+			else
+			{
+				FocusPluginValidationText.Text = "⛔ " + message;
+				FocusPluginValidationText.Visibility = Visibility.Visible;
+			}
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogError("[plugin] 刷新插件参数校验结论时异常", ex);
+			FocusPluginValidationText.Visibility = Visibility.Collapsed;
+		}
+	}
+
+	/// <summary>参数表单内任一字段变化时的回调。</summary>
+	private void OnFocusPluginParameterChanged()
+	{
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+
+		try
+		{
+			// 只刷新校验结论与自动保存，刻意<b>不</b>调用 RefreshSlots()：
+			// 那会重建槽位列表并连带刷新焦点编辑器，把用户正在输入的参数控件整个换掉 ——
+			// 外在表现就是「每敲一个字就失去焦点」。参数不影响槽位显示名，无需刷新列表。
+			RefreshFocusPluginValidation();
+			ScheduleAutoSave();
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogError("[plugin] 处理插件参数变更时异常", ex);
+		}
+	}
+
+	private PluginParameterForm EnsureFocusPluginParameterForm() =>
+		_focusPluginParameterForm ??= new PluginParameterForm(
+			FocusPluginParamsPanel,
+			() => GetCurrentFocusActionItem(),
+			OnFocusPluginParameterChanged);
+
+	/// <param name="keepHintText">为真时保留提示行（用于「动作不可用」这类需要继续展示给的说明）。</param>
+	private void ClearFocusPluginParameterForm(bool keepHintText = false)
+	{
+		_focusPluginParameterForm?.Reset();
+
+		if (FocusPluginParamsPanel != null) FocusPluginParamsPanel.Visibility = Visibility.Collapsed;
+		if (FocusPluginValidationText != null)
+		{
+			FocusPluginValidationText.Text = "";
+			FocusPluginValidationText.Visibility = Visibility.Collapsed;
+		}
+		if (!keepHintText && FocusPluginParamsHintText != null)
+		{
+			FocusPluginParamsHintText.Visibility = Visibility.Collapsed;
+		}
+	}
+
+	private void FocusOpenPluginPageBtn_Click(object sender, RoutedEventArgs e)
+	{
+		SwitchToTab(5);
+	}
+
+	private void FocusReloadPluginBtn_Click(object sender, RoutedEventArgs e)
+	{
+		ActionItem? item = GetCurrentFocusActionItem();
+		StarPie.Plugin.PluginActionRef? reference = item?.PluginActionRef;
+		if (item == null || reference == null || !reference.IsValid)
+		{
+			System.Windows.MessageBox.Show(this, "当前动作尚未选定具体的插件动作。", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Information);
+			return;
+		}
+
+		if (PluginHost.Find(reference.PluginId) == null)
+		{
+			System.Windows.MessageBox.Show(this, $"未找到插件 {reference.PluginId}，请到「插件与扩展」页查看。", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+			return;
+		}
+
+		// 进程内插件无法原地热替换 —— 已加载的程序集不会被重新读取。
+		// 必须走「停用 → 启用」才会真正把磁盘上的新二进制加载进来。
+		if (!PluginHost.Disable(reference.PluginId, out string disableError))
+		{
+			System.Windows.MessageBox.Show(this, $"停用失败：{disableError}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+			return;
+		}
+
+		if (!PluginHost.Enable(reference.PluginId, out string enableError))
+		{
+			System.Windows.MessageBox.Show(this, $"重新加载失败：{enableError}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+			return;
+		}
+
+		PluginInstance? reloaded = PluginHost.Find(reference.PluginId);
+		PluginHost.NotifyUser("StarPie 插件", $"{reference.PluginId} 已重新加载。");
+
+		if (reloaded?.RequiresRestart == true)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"{reference.PluginId} 已重新加载，但旧程序集未能立即从内存释放，需要重启 StarPie 才能完全生效。",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+		}
+
+		UpdateFocusEditorUi();
+	}
+
+	// ==================== 🧩 插件与扩展 ====================
+
+	/// <summary>
+	/// 刷新插件管理页。
+	/// </summary>
+	/// <param name="resyncFromDisk">
+	/// 是否先与磁盘对账。进入页面时为 true —— 用户可能刚在资源管理器里拷入或删除了插件目录；
+	/// 页面内操作（启用/停用/卸载）之后为 false，那些操作自身已经把状态同步过了。
+	/// </param>
+	private void RefreshPluginManagerUi(bool resyncFromDisk = false)
+	{
+		if (PluginListBox == null) return;
+
+		if (resyncFromDisk && PluginHost.IsInitialized)
+		{
+			try
+			{
+				PluginHost.SyncFromDisk();
+			}
+			catch (Exception ex)
+			{
+				AppLogger.LogWarn($"[plugin] 与磁盘对账失败：{ex.Message}");
+			}
+		}
+
+		// 候选列表每次都重扫。扫描目录里的 .dll 是用户随时会替换的东西，
+		// 缓存一次再复用只会让界面显示上一个版本的信息；而且通常只有寥寥几枚文件。
+		if (PluginHost.IsInitialized)
+		{
+			try
+			{
+				PluginHost.ScanCandidates();
+			}
+			catch (Exception ex)
+			{
+				AppLogger.LogWarn($"[plugin] 扫描候选目录失败：{ex.Message}");
+			}
+		}
+
+		var items = new List<PluginListItem>();
+		try
+		{
+			foreach (PluginInstance instance in PluginHost.ListInstances())
+			{
+				items.Add(BuildPluginListItem(instance));
+			}
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogWarn($"[plugin] 读取插件列表失败：{ex.Message}");
+		}
+
+		PluginListBox.ItemsSource = items;
+
+		if (PluginsEmptyStatePanel != null)
+		{
+			PluginsEmptyStatePanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+		}
+
+		if (PluginSystemEnabledCheckBox != null)
+		{
+			PluginSystemEnabledCheckBox.IsChecked = PluginHost.IsEnabled;
+			PluginSystemEnabledCheckBox.IsEnabled = PluginHost.IsInitialized;
+		}
+
+		if (PluginsStatusSummaryText != null)
+		{
+			int enabledCount = items.Count(i => i.IsEnabled);
+			string directoryHint = $"数据目录：{PluginPaths.Root}";
+			PluginsStatusSummaryText.Text = items.Count == 0
+				? $"尚未安装任何插件。{directoryHint}"
+				: $"共 {items.Count} 个插件，{enabledCount} 个已启用。{directoryHint}";
+		}
+
+		if (PluginsSafeModeText != null)
+		{
+			PluginsSafeModeText.Visibility = PluginHost.IsSafeModeActive ? Visibility.Visible : Visibility.Collapsed;
+			if (PluginHost.IsSafeModeActive)
+			{
+				PluginsSafeModeText.Text = "⚠️ 安全模式：上次启动时插件引发异常，已自动禁用问题插件，避免反复崩溃。";
+			}
+		}
+
+		RefreshPluginCandidatesUi();
+	}
+
+	/// <summary>
+	/// 刷新「只读扫描目录」那一块。
+	/// <para>
+	/// 目录不存在时也要显示这一块（而不是整块藏起来）：用户按文档把 .dll 放进
+	/// 「程序目录\plugin」，结果发现界面上什么都没有，是最容易让人以为功能坏了的情形。
+	/// 所以这里始终把<b>实际路径</b>写出来，并明确说明宿主不会替用户创建它。
+	/// </para>
+	/// </summary>
+	private void RefreshPluginCandidatesUi()
+	{
+		if (PluginCandidatesPanel == null) return;
+
+		IReadOnlyList<PluginCandidate> candidates;
+		try
+		{
+			candidates = PluginHost.Candidates;
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogWarn($"[plugin] 读取候选列表失败：{ex.Message}");
+			candidates = Array.Empty<PluginCandidate>();
+		}
+
+		int installable = candidates.Count(c => c.CanInstall);
+
+		if (PluginCandidatesHeaderText != null)
+		{
+			PluginCandidatesHeaderText.Text = PluginPaths.ScanRootExists
+				? (installable > 0
+					? $"扫描目录里发现 {candidates.Count} 个 .dll，其中 {installable} 个可以安装"
+					: "扫描目录里没有可安装的插件")
+				: "扫描目录不存在（宿主不会创建它）";
+		}
+
+		if (PluginCandidatesPathText != null)
+		{
+			PluginCandidatesPathText.Text = PluginPaths.ScanRootExists
+				? PluginPaths.ScanRoot
+				: $"{PluginPaths.ScanRoot}　—　把插件 .dll 放进这个文件夹后点「重新扫描」即可识别。" +
+				  "该目录由你自己创建：StarPie 装在只读位置时无权创建它。";
+		}
+
+		if (PluginCandidateItemsControl != null)
+		{
+			PluginCandidateItemsControl.ItemsSource = candidates.Count == 0 ? null : candidates;
+		}
+
+		PluginCandidatesPanel.Visibility = Visibility.Visible;
+	}
+
+	/// <summary>点候选卡片上的「安装 / 更新 / 降级安装」。</summary>
+	private void InstallPluginCandidateButton_Click(object sender, RoutedEventArgs e)
+	{
+		if (sender is not System.Windows.Controls.Button button) return;
+		string? dllPath = button.Tag as string;
+		if (string.IsNullOrWhiteSpace(dllPath)) return;
+
+		PluginCandidate? candidate = PluginHost.Candidates
+			.FirstOrDefault(c => string.Equals(c.DllPath, dllPath, StringComparison.OrdinalIgnoreCase));
+
+		if (candidate == null)
+		{
+			System.Windows.MessageBox.Show(this,
+				"这枚候选已经不在扫描目录里了（可能刚被移走或改名）。已重新扫描，请再试一次。",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+			RefreshPluginManagerUi();
+			return;
+		}
+
+		if (!ConfirmCandidateInstall(candidate)) return;
+
+		bool ok = PluginHost.InstallCandidate(candidate, out string error);
+
+		if (!ok)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"安装失败：{error}", "StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Warning);
+		}
+		else if (candidate.State == PluginCandidateState.Update)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"{candidate.DisplayName} 已更新到 {candidate.VersionText} 并已启用。\n\n" +
+				"如果它之前已经在运行，旧程序集要到下次启动 StarPie 才会完全从内存释放。",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+		}
+
+		RefreshPluginManagerUi();
+	}
+
+	/// <summary>候选安装确认卡。文案随状态变化，把「会发生什么」说清楚而不是只问一句「确定吗」。</summary>
+	private bool ConfirmCandidateInstall(PluginCandidate candidate)
+	{
+		var text = new System.Text.StringBuilder();
+		text.AppendLine($"即将安装：{candidate.DisplayName} {candidate.VersionText}");
+		text.AppendLine($"文件：{candidate.DllPath}");
+		text.AppendLine();
+
+		if (candidate.Scan.Manifest?.Capabilities is { Count: > 0 } capabilities)
+		{
+			text.AppendLine("该插件声明了以下能力：");
+			text.AppendLine(DescribeCapabilities(candidate.Scan.Manifest.ResolveCapabilities()));
+			text.AppendLine();
+		}
+
+		if (candidate.HasNote)
+		{
+			text.AppendLine($"扫描结果：{candidate.Note}");
+			text.AppendLine();
+		}
+
+		text.AppendLine(candidate.State switch
+		{
+			PluginCandidateState.Update =>
+				"点击「确定」后将用扫描目录里的新版覆盖现有安装并立即启用。" +
+				"如果插件正在运行，宿主会先自动停用它再替换文件。",
+			PluginCandidateState.Downgrade =>
+				"点击「确定」后将用更旧的版本覆盖现有安装。除非你明确需要退回旧版，否则不建议这样做。",
+			PluginCandidateState.Replaced =>
+				"点击「确定」后将用扫描目录里的文件覆盖现有安装（版本号相同但内容不同）。",
+			_ => "点击「确定」后插件将被复制到 StarPie 的数据目录并立即启用。",
+		});
+		text.AppendLine();
+		text.Append("插件以 StarPie 当前权限在进程内运行，请只安装你信任的来源。");
+
+		return System.Windows.MessageBox.Show(this, text.ToString(),
+			"确认安装插件", MessageBoxButton.OKCancel, MessageBoxImage.Warning) == MessageBoxResult.OK;
+	}
+
+	/// <summary>打开只读扫描目录。目录不存在时只提示路径，绝不代为创建。</summary>
+	private void OpenPluginScanFolderButton_Click(object sender, RoutedEventArgs e)
+	{
+		string scanRoot = PluginPaths.ScanRoot;
+
+		if (!PluginPaths.ScanRootExists)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"扫描目录还不存在：\n{scanRoot}\n\n" +
+				"StarPie 不会替你创建它 —— 程序可能装在只读位置，宿主对这里只读不写。\n" +
+				"如需使用随包附带的插件，请手工创建该文件夹，把插件 .dll 放进去，再点「重新扫描」。",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+			return;
+		}
+
+		try
+		{
+			System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+			{
+				FileName = scanRoot,
+				UseShellExecute = true,
+			});
+		}
+		catch (Exception ex)
+		{
+			System.Windows.MessageBox.Show(this, $"打开扫描目录失败：{ex.Message}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+		}
+	}
+
+	/// <summary>把运行时实例翻译成列表项。所有面向用户的文案都集中在这里。</summary>
+	private static PluginListItem BuildPluginListItem(PluginInstance instance)
+	{
+		PluginRegistryEntry entry = instance.Entry;
+		StarPie.Plugin.PluginManifest? manifest = instance.Scan.Manifest;
+
+		string displayName = !string.IsNullOrWhiteSpace(entry.Name)
+			? entry.Name
+			: (!string.IsNullOrWhiteSpace(manifest?.Name) ? manifest!.Name : instance.PluginId);
+
+		(string glyph, string stateText) = DescribePluginState(instance);
+
+		var summary = new List<string>();
+		if (!string.IsNullOrWhiteSpace(entry.Author)) summary.Add($"作者 {entry.Author}");
+		if (instance.ActionCount > 0) summary.Add($"贡献 {instance.ActionCount} 个动作");
+		else if (instance.State != PluginRuntimeState.Active) summary.Add("未加载");
+		if (!string.IsNullOrWhiteSpace(entry.License)) summary.Add(entry.License);
+
+		string summaryText = string.Join("　|　", summary);
+		if (!string.IsNullOrWhiteSpace(entry.Description))
+		{
+			summaryText = entry.Description + "\n" + summaryText;
+		}
+		if (entry.CapabilitiesAck is { Count: > 0 })
+		{
+			summaryText += $"\n声明能力：{string.Join("、", entry.CapabilitiesAck)}";
+		}
+
+		var detail = new List<string> { $"ID {instance.PluginId}" };
+		if (!string.IsNullOrWhiteSpace(instance.Scan.TargetFramework)) detail.Add(instance.Scan.TargetFramework);
+		if (!string.IsNullOrWhiteSpace(instance.Scan.MachineText)) detail.Add(instance.Scan.MachineText);
+		if (!string.IsNullOrWhiteSpace(instance.Scan.Sha256Short)) detail.Add($"SHA256 {instance.Scan.Sha256Short}");
+		detail.Add(instance.Scan.IsSigned ? "已签名" : "未签名");
+		if (!string.IsNullOrWhiteSpace(instance.Directory)) detail.Add(instance.Directory);
+		if (!string.IsNullOrWhiteSpace(entry.ExternalPath)) detail.Add($"外部路径 {entry.ExternalPath}");
+
+		// 错误行：优先展示插件自己的失败原因；没有失败但待重启时，说明「为什么要重启」。
+		string errorText = instance.LastError ?? "";
+		if (string.IsNullOrWhiteSpace(errorText) && instance.RequiresRestart)
+		{
+			errorText = "旧程序集尚未从内存释放，重启 StarPie 后才会完全生效。";
+		}
+
+		return new PluginListItem
+		{
+			PluginId = instance.PluginId,
+			DisplayName = displayName,
+			VersionText = string.IsNullOrWhiteSpace(entry.Version) ? "" : $"v{entry.Version}",
+			SummaryText = summaryText,
+			DetailText = string.Join("　·　", detail),
+			StateText = stateText,
+			StatusGlyph = glyph,
+			ErrorText = errorText,
+			IsEnabled = entry.Enabled,
+		};
+	}
+
+	private static (string Glyph, string Text) DescribePluginState(PluginInstance instance)
+	{
+		if (instance.State == PluginRuntimeState.Active)
+		{
+			return instance.RequiresRestart ? ("🔄", "运行中 · 待重启") : ("✅", "运行中");
+		}
+
+		return instance.State switch
+		{
+			PluginRuntimeState.Loading => ("⏳", "加载中"),
+			PluginRuntimeState.Installed => ("⭕", instance.Entry.Enabled ? "已启用 · 待加载" : "未启用"),
+			PluginRuntimeState.Faulted => ("⚠️", "运行异常"),
+			PluginRuntimeState.Quarantined => ("🚫", "已隔离"),
+			PluginRuntimeState.Failed => ("❌", "加载失败"),
+			PluginRuntimeState.Incompatible => ("⛔", "不兼容"),
+			PluginRuntimeState.RequiresRestart => ("🔄", "待重启生效"),
+			_ => ("⭕", instance.State.ToString()),
+		};
+	}
+
+	private bool EnsurePluginSystemReady()
+	{
+		if (PluginHost.IsInitialized) return true;
+
+		System.Windows.MessageBox.Show(this,
+			"插件系统尚未完成初始化。请稍候片刻再试，或重启 StarPie。",
+			"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+		return false;
+	}
+
+	private void InstallPluginButton_Click(object sender, RoutedEventArgs e)
+	{
+		if (!EnsurePluginSystemReady()) return;
+
+		var dialog = new Microsoft.Win32.OpenFileDialog
+		{
+			Title = "选择要安装的插件 (.dll)",
+			Filter = "插件程序集 (*.dll)|*.dll|所有文件 (*.*)|*.*",
+			CheckFileExists = true,
+			Multiselect = false,
+		};
+
+		if (dialog.ShowDialog(this) != true) return;
+
+		PluginScanResult scan;
+		try
+		{
+			scan = PluginHost.PrepareInstall(dialog.FileName);
+		}
+		catch (Exception ex)
+		{
+			System.Windows.MessageBox.Show(this, $"读取所选文件时出错：\n{ex.Message}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Error);
+			return;
+		}
+
+		if (!scan.Accepted)
+		{
+			System.Windows.MessageBox.Show(this,
+				"这个文件不能作为 StarPie 插件安装。\n\n" +
+				$"原因：{PluginScanFailureText.Title(scan.Failure)}\n" +
+				$"详情：{scan.ErrorDetail}\n\n" +
+				$"建议：{PluginScanFailureText.Hint(scan.Failure)}\n\n" +
+				$"文件：{scan.DllPath}",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Warning);
+			return;
+		}
+
+		// 识别已通过 —— 把「它到底是什么」摊开给用户看，确认后才落盘。
+		// 插件是以 StarPie 的权限在进程内跑代码的，这一步是唯一的知情同意关口。
+		if (!ConfirmPluginInstall(scan)) return;
+
+		PluginInstallResult result = PluginHost.CommitInstall(scan, new PluginInstallOptions
+		{
+			Acknowledged = true,
+			OverwriteExisting = true,
+			// 安装与启用分开：先让用户在列表里看清它、再决定是否启用，
+			// 避免「装完即运行」这种用户还没反应过来就已经生效的体验。
+			EnableAfterInstall = false,
+			AcknowledgedCapabilities = scan.Manifest?.Capabilities?.ToList() ?? new List<string>(),
+		});
+
+		if (!result.Success)
+		{
+			System.Windows.MessageBox.Show(this, $"安装失败：{result.Error}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Error);
+			return;
+		}
+
+		RefreshPluginManagerUi();
+		PluginHost.NotifyUser("StarPie 插件", $"{result.PluginId} 安装完成，到列表中启用它即可使用。");
+
+		System.Windows.MessageBox.Show(this,
+			$"插件 {result.PluginId} 已安装。\n\n" +
+			"它当前处于「未启用」状态。在列表里勾选「启用」后，它注册的动作才会出现在" +
+			"「手势与动作」页的动作类型下拉框中，从而可以分配到轮盘上。",
+			"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+	}
+
+	private bool ConfirmPluginInstall(PluginScanResult scan)
+	{
+		StarPie.Plugin.PluginManifest? manifest = scan.Manifest;
+		StarPie.Plugin.PluginCapability capabilities =
+			manifest?.ResolveCapabilities() ?? StarPie.Plugin.PluginCapability.None;
+
+		var text = new System.Text.StringBuilder();
+		text.AppendLine($"插件 ID：{manifest?.Id}");
+		text.AppendLine($"名称：{manifest?.Name}");
+		text.AppendLine($"版本：{manifest?.Version}　　作者：{manifest?.Author}");
+		if (!string.IsNullOrWhiteSpace(manifest?.Description))
+		{
+			text.AppendLine($"说明：{manifest.Description}");
+		}
+		text.AppendLine();
+		text.AppendLine($"目标框架：{scan.TargetFramework}");
+		text.AppendLine($"平台架构：{scan.MachineText}");
+		text.AppendLine($"文件大小：{scan.FileSizeText}");
+		text.AppendLine($"SHA256：{scan.Sha256Short}…");
+		text.AppendLine($"数字签名：{(scan.IsSigned ? scan.SignerSubject : "无（未签名）")}");
+		text.AppendLine($"清单来源：{scan.ManifestSource}");
+		text.AppendLine();
+		text.AppendLine($"声明能力：{(manifest?.Capabilities is { Count: > 0 } ? string.Join("、", manifest.Capabilities) : "无")}");
+		text.AppendLine($"拟安装到：{PluginPaths.Root}\\{manifest?.Id}");
+		text.AppendLine();
+		text.AppendLine("⚠️ 安全提示");
+		text.AppendLine("插件会以 StarPie 当前的权限在你的电脑上运行代码。");
+		if (capabilities != StarPie.Plugin.PluginCapability.None)
+		{
+			text.AppendLine("该插件额外声明了以下权限，请确认来源可信：");
+			text.AppendLine(DescribeCapabilities(capabilities));
+		}
+		text.AppendLine();
+		text.Append("点击「确定」表示你已了解并接受以上风险。");
+
+		return System.Windows.MessageBox.Show(this, text.ToString(), "确认安装插件",
+			MessageBoxButton.OKCancel, MessageBoxImage.Warning) == MessageBoxResult.OK;
+	}
+
+	private static string DescribeCapabilities(StarPie.Plugin.PluginCapability capabilities)
+	{
+		var parts = new List<string>();
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Process)) parts.Add("· 启动进程 / 操作其他程序");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.FileSystem)) parts.Add("· 读写你的文件");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Network)) parts.Add("· 访问网络");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Clipboard)) parts.Add("· 读取或修改剪贴板");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Registry)) parts.Add("· 读写注册表");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.GlobalHook)) parts.Add("· 安装全局键盘/鼠标钩子");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Ui)) parts.Add("· 显示界面与通知");
+		if (capabilities.HasFlag(StarPie.Plugin.PluginCapability.Admin)) parts.Add("· 需要管理员权限");
+		return parts.Count == 0 ? "（无）" : string.Join("\n", parts);
+	}
+
+	private void RescanPluginsButton_Click(object sender, RoutedEventArgs e)
+	{
+		int discovered = PluginHost.SyncFromDisk();
+
+		// 刷新界面时内部会重扫候选目录，这里跑完就能读到最新结果。
+		RefreshPluginManagerUi();
+
+		int installable = PluginHost.Candidates.Count(c => c.CanInstall);
+		string candidateHint = installable > 0
+			? $"扫描目录里另有 {installable} 个可安装项。"
+			: "";
+
+		PluginHost.NotifyUser("StarPie 插件",
+			discovered > 0
+				? $"扫描完成，新发现 {discovered} 个插件。{candidateHint}"
+				: $"扫描完成，没有发现新插件。{candidateHint}");
+	}
+
+	private void OpenPluginsFolderButton_Click(object sender, RoutedEventArgs e)
+	{
+		try
+		{
+			PluginPaths.EnsureDirectories();
+			System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+			{
+				FileName = PluginPaths.Root,
+				UseShellExecute = true,
+			});
+		}
+		catch (Exception ex)
+		{
+			System.Windows.MessageBox.Show(this, $"打开插件目录失败：{ex.Message}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+		}
+	}
+
+	/// <summary>
+	/// 插件系统总开关。
+	/// <para>
+	/// 用 Click 而不是 Checked/Unchecked：给 <c>IsChecked</c> 赋值同样会触发
+	/// Checked/Unchecked，那样每次刷新页面都会把用户的配置再写一遍。
+	/// Click 只在真实交互时触发，天然规避这类误写。
+	/// </para>
+	/// </summary>
+	private void PluginSystemEnabledCheckBox_Click(object sender, RoutedEventArgs e)
+	{
+		if (PluginSystemEnabledCheckBox == null) return;
+
+		bool desired = PluginSystemEnabledCheckBox.IsChecked == true;
+		int affected = PluginHost.GetRegisteredActions().Count;
+
+		PluginHost.SetEnabled(desired);
+		RefreshPluginManagerUi();
+
+		if (!desired && affected > 0)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"插件系统已关闭。\n\n" +
+				$"已经分配到轮盘上的 {affected} 个插件动作会原样保留，但触发时不会执行。\n" +
+				"重新打开开关即可恢复。",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Information);
+		}
+	}
+
+	private void PluginRowEnabledCheckBox_Click(object sender, RoutedEventArgs e)
+	{
+		if (sender is not System.Windows.Controls.CheckBox { Tag: string pluginId } box ||
+			string.IsNullOrWhiteSpace(pluginId))
+		{
+			return;
+		}
+
+		bool desired = box.IsChecked == true;
+		bool ok = desired
+			? PluginHost.Enable(pluginId, out string error)
+			: PluginHost.Disable(pluginId, out error);
+
+		if (!ok)
+		{
+			System.Windows.MessageBox.Show(this,
+				$"{(desired ? "启用" : "停用")}插件 {pluginId} 失败：\n\n{error}",
+				"StarPie 插件", MessageBoxButton.OK, MessageBoxImage.Warning);
+		}
+
+		RefreshPluginManagerUi();
+	}
+
+	private void UninstallPluginButton_Click(object sender, RoutedEventArgs e)
+	{
+		if (sender is not System.Windows.Controls.Button { Tag: string pluginId } ||
+			string.IsNullOrWhiteSpace(pluginId))
+		{
+			return;
+		}
+
+		MessageBoxResult choice = System.Windows.MessageBox.Show(this,
+			$"确定要卸载插件 {pluginId} 吗？\n\n" +
+			"· 插件文件与它自己的配置会被删除\n" +
+			"· 已经分配到轮盘上的插件动作会保留，但触发时会提示「插件不可用」\n\n" +
+			"此操作不可撤销。",
+			"卸载插件", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+
+		if (choice != MessageBoxResult.Yes) return;
+
+		if (!PluginHost.Uninstall(pluginId, removePluginData: true, out string error))
+		{
+			System.Windows.MessageBox.Show(this, $"卸载失败：\n\n{error}", "StarPie 插件",
+				MessageBoxButton.OK, MessageBoxImage.Warning);
+		}
+
+		RefreshPluginManagerUi();
+	}
+
 	private void UpdateFocusActionTypeItemsSource(string? currentTag = null)
 	{
 		if (FocusActionTypeComboBox == null) return;
@@ -5808,6 +6719,8 @@ public partial class SettingsWindow : Window
 			FocusActionTypeComboBox.ItemsSource = targetList;
 			if (prevSelectedTag != null)
 			{
+				// 插件动作的 Tag 现在固定是裸 "Plugin"，一定在列表里 ——
+				// 不再需要「引用失效时退回兜底项」的退化匹配（那是贡献点 ID 编码进 Tag 时代的产物）。
 				var match = targetList.FirstOrDefault(t => string.Equals(t.Tag, prevSelectedTag, StringComparison.OrdinalIgnoreCase));
 				if (match != null)
 				{
@@ -5828,7 +6741,18 @@ public partial class SettingsWindow : Window
 		ActionItem? item = GetCurrentFocusActionItem();
 		if (item != null && FocusActionTypeComboBox.SelectedValue is string newType)
 		{
-			if (newType == "WindowManager")
+			if (newType == PluginActionBinding.TypeName)
+			{
+				// 只切类型，**刻意不清插件引用**：用户在内置类型与插件动作之间来回切换时，
+				// 已配好的插件动作不应被清掉（改选具体动作是子下拉的事）。
+				// 引用为空只表示「还没选过」，由子下拉的空状态去引导。
+				item.Type = PluginActionBinding.TypeName;
+				if (string.IsNullOrEmpty(item.Name) || item.Name.StartsWith("快捷动作") || item.Name.StartsWith("动作"))
+				{
+					item.Name = I18n.T("ActionTypePluginShort");
+				}
+			}
+			else if (newType == "WindowManager")
 			{
 				bool wasWindowType = item.Type == "Tile" || item.Type == "ToggleTopmost" || item.Type == "MoveMonitor" || item.Type == "WindowOpacity" || item.Type == "SwitchWindow";
 				if (!wasWindowType)
@@ -5847,6 +6771,9 @@ public partial class SettingsWindow : Window
 			}
 			else
 			{
+				// 从插件动作切回内置类型时，必须清掉插件引用，
+				// 否则会留下「内置类型 + 悬挂插件引用」的混合状态。
+				PluginActionBinding.Clear(item);
 				item.Type = newType;
 			}
 

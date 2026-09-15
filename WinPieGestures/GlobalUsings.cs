@@ -22,5 +22,8 @@ global using HorizontalAlignment = System.Windows.HorizontalAlignment;
 global using VerticalAlignment = System.Windows.VerticalAlignment;
 global using Cursors = System.Windows.Input.Cursors;
 global using ComboBox = System.Windows.Controls.ComboBox;
+// WinForms 的隐式 using 让 CheckBox 在「代码里 new 一个勾选框」时产生歧义。
+// 这里与 Button / TextBox / ComboBox 保持同一套处理方式，而不是在调用处逐个写全名。
+global using CheckBox = System.Windows.Controls.CheckBox;
 global using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
 global using SaveFileDialog = Microsoft.Win32.SaveFileDialog;

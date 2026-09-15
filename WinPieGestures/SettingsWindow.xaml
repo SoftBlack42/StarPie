@@ -620,6 +620,12 @@
               <TextBlock Name="NavTab4Text" Text="关于与更新" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
           </RadioButton>
+          <RadioButton Name="NavTab5" Style="{StaticResource NavTabRadioButtonStyle}" GroupName="SidebarTabs" Tag="5" Checked="NavTab_Checked" ToolTip="{Binding Text, ElementName=NavTab5Text}">
+            <StackPanel Orientation="Horizontal">
+              <Path Width="18" Height="18" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type RadioButton}}}" Margin="0,0,14,0" Data="M20.5,11H19V7C19,5.89 18.1,5 17,5H13V3.5A2.5,2.5 0 0,0 10.5,1A2.5,2.5 0 0,0 8,3.5V5H4A2,2 0 0,0 2,7V10.8H3.5C5,10.8 6.2,12 6.2,13.5C6.2,15 5,16.2 3.5,16.2H2V20A2,2 0 0,0 4,22H7.8V20.5C7.8,19 9,17.8 10.5,17.8C12,17.8 13.2,19 13.2,20.5V22H17A2,2 0 0,0 19,20V16H20.5A2.5,2.5 0 0,0 23,13.5A2.5,2.5 0 0,0 20.5,11Z" />
+              <TextBlock Name="NavTab5Text" Text="插件与扩展" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+          </RadioButton>
         </StackPanel>
         <StackPanel Grid.Row="2" VerticalAlignment="Bottom" Margin="0,10,0,0">
           <!-- 侧边栏主题切换器 (展开态: 4段胶囊分段按钮) -->
@@ -1277,6 +1283,35 @@
                                 <TextBlock Text="动作显示名称:" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                                 <TextBox Height="32" FontSize="12" VerticalContentAlignment="Center" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="自定义此动作的显示名称" />
                               </StackPanel>
+                            </Grid>
+
+                            <!--
+                              2b. 插件动作子下拉：仅当动作类型选为「插件动作」时出现。
+
+                              候选动作按插件分组呈现，分组头就是插件显示名，且分组头本身不可选中 ——
+                              所以不会出现「选中了插件名，但它不是一个动作」这种非法状态。
+                              分组集合视图由 PluginActionBinding.BuildPluginActionView 提供。
+                            -->
+                            <Grid Margin="0,0,0,10" Visibility="{Binding IsPluginType, Converter={StaticResource BoolToVis}}">
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="*" />
+                              </Grid.ColumnDefinitions>
+                              <StackPanel Margin="0,0,8,0">
+                                <TextBlock Text="插件动作 (按插件分组):" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                                <ComboBox Height="32" FontSize="11.5" Style="{StaticResource FlatComboBoxStyle}" ItemsSource="{Binding PluginActionOptions}" SelectedValuePath="FullId" DisplayMemberPath="DisplayName" SelectedValue="{Binding SelectedPluginActionFullId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="同一插件的动作归入以该插件名命名的分组">
+                                  <ComboBox.GroupStyle>
+                                    <GroupStyle>
+                                      <GroupStyle.HeaderTemplate>
+                                        <DataTemplate>
+                                          <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimaryBrush}" Margin="4,6,0,3" />
+                                        </DataTemplate>
+                                      </GroupStyle.HeaderTemplate>
+                                    </GroupStyle>
+                                  </ComboBox.GroupStyle>
+                                </ComboBox>
+                              </StackPanel>
+                              <TextBlock Grid.Column="1" VerticalAlignment="Bottom" Margin="0,0,0,9" FontSize="11" TextWrapping="Wrap" Foreground="#D97706" Visibility="{Binding IsPluginActionBroken, Converter={StaticResource BoolToVis}}" Text="⚠️ 原先引用的插件动作已不可用（插件可能已被停用或卸载），请重新选择。" />
                             </Grid>
 
                             <!-- 3. 参数专属配置区 -->
@@ -2882,7 +2917,60 @@
                           <Button Name="FocusTestActionBtn" Grid.Column="3" Content="▶ 测试触发" Style="{StaticResource ModernButtonStyle}" Height="30" Padding="10,0" Margin="8,0,0,0" Click="FocusTestActionBtn_Click" />
                         </Grid>
 
+                        <!--
+                          插件动作子下拉：仅当「触发动作类型」选为「插件动作」时出现。
+                          候选动作按插件分组呈现，分组头就是插件显示名，且分组头本身不可选中 ——
+                          因此不会出现「选中了插件名，但它不是一个动作」这种非法状态。
+                        -->
+                        <Grid Name="FocusPluginActionRow" Margin="0,0,0,10" Visibility="Collapsed">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="插件动作:" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,10,0" />
+                          <ComboBox Name="FocusPluginActionComboBox" Grid.Column="1" Style="{StaticResource FlatComboBoxStyle}" Height="30" SelectedValuePath="FullId" DisplayMemberPath="DisplayName" SelectionChanged="FocusPluginActionComboBox_SelectionChanged" ToolTip="同一插件的动作归入以该插件名命名的分组">
+                            <ComboBox.GroupStyle>
+                              <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                  <DataTemplate>
+                                    <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimaryBrush}" Margin="4,6,0,3" />
+                                  </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                              </GroupStyle>
+                            </ComboBox.GroupStyle>
+                          </ComboBox>
+                        </Grid>
+
                         <!-- 动态参数面板容器 -->
+                        <!-- 0. 插件动作面板 -->
+                        <StackPanel Name="FocusPluginPanel" Visibility="Collapsed">
+                          <Border Background="{DynamicResource SubtleCardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                            <StackPanel>
+                              <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="🔌" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBlock Name="FocusPluginTitleText" Text="插件动作" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <TextBlock Name="FocusPluginDetailText" Text="" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                              <TextBlock Name="FocusPluginParamsHintText" Text="" FontSize="11" Foreground="#D97706" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+
+                              <!--
+                                插件动作的参数表单。
+                                字段由插件在 ActionDescriptor 里声明，控件由宿主按主程序的隐式样式动态创建，
+                                因此深浅色、字体、圆角与内置动作完全一致，插件也无法让界面错位。
+                              -->
+                              <StackPanel Name="FocusPluginParamsPanel" Margin="0,10,0,0" Visibility="Collapsed" />
+
+                              <!-- 参数校验结果（宿主声明约束 + 插件自定义校验的统一结论） -->
+                              <TextBlock Name="FocusPluginValidationText" Text="" FontSize="11" Foreground="#DC2626" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+
+                              <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Button Content="⚙️ 打开插件管理" Style="{StaticResource ModernButtonStyle}" Height="28" Padding="10,0" Click="FocusOpenPluginPageBtn_Click" />
+                                <Button Name="FocusPluginReloadBtn" Content="🔄 停用后重新加载" Style="{StaticResource ModernButtonStyle}" Height="28" Padding="10,0" Margin="8,0,0,0" ToolTip="插件二进制被重新编译后，需要停用再启用才能生效（进程内插件无法原地热替换）" Click="FocusReloadPluginBtn_Click" />
+                              </StackPanel>
+                            </StackPanel>
+                          </Border>
+                        </StackPanel>
+
                         <!-- 1. 热键面板 -->
                         <StackPanel Name="FocusHotkeyPanel" Visibility="Visible">
                           <Grid>
@@ -3705,6 +3793,173 @@
             </ScrollViewer>
           </Grid>
         </Grid>
+        <!-- ==================== 🧩 插件与扩展 ==================== -->
+        <Grid Name="PluginsSettingsGrid" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <!-- 页头 + 操作按钮 -->
+          <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+              <TextBlock Name="PluginsPageHeader" Text="插件与扩展" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" />
+              <TextBlock Name="PluginsPageSubheader" Text="把插件 .dll 放进程序目录的 plugin 文件夹，或手动选择 .dll 安装。插件以 StarPie 当前权限在进程内运行，请只安装你信任的来源。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button Name="InstallPluginButton" Content="➕ 安装插件 (.dll)..." Style="{StaticResource PrimaryButtonStyle}" Height="32" Padding="12,0" Click="InstallPluginButton_Click" />
+              <Button Name="RescanPluginsButton" Content="🔄 重新扫描" Style="{StaticResource ModernButtonStyle}" Height="32" Padding="12,0" Margin="8,0,0,0" ToolTip="重新读取扫描目录与插件数据目录，识别新增、手工拷入或外部修改过的插件" Click="RescanPluginsButton_Click" />
+              <Button Name="OpenPluginsFolderButton" Content="📂 打开数据目录" Style="{StaticResource ModernButtonStyle}" Height="32" Padding="12,0" Margin="8,0,0,0" ToolTip="打开 StarPie 的可写插件目录：安装副本、启用记录与插件私有数据都在这里" Click="OpenPluginsFolderButton_Click" />
+            </StackPanel>
+          </Grid>
+
+          <!-- 总开关 + 状态摘要 -->
+          <Border Grid.Row="1" Background="{DynamicResource SubtleCardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <CheckBox Name="PluginSystemEnabledCheckBox" Content="启用插件系统" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" ToolTip="关闭后所有插件动作都不会被触发，但插件配置与已分配到轮盘的动作会被完整保留" Click="PluginSystemEnabledCheckBox_Click" />
+              <TextBlock Name="PluginsStatusSummaryText" Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap" />
+              <TextBlock Name="PluginsSafeModeText" Grid.Column="2" FontSize="11.5" Foreground="#D97706" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+            </Grid>
+          </Border>
+
+          <!-- 只读扫描目录里的待安装候选 -->
+          <Border Grid.Row="2" Name="PluginCandidatesPanel" Background="{DynamicResource SubtleCardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,12" Visibility="Collapsed">
+            <StackPanel>
+              <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                  <TextBlock Name="PluginCandidatesHeaderText" Text="扫描目录" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap" />
+                  <TextBlock Name="PluginCandidatesPathText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap" Opacity="0.85" />
+                </StackPanel>
+                <Button Name="OpenPluginScanFolderButton" Grid.Column="1" Content="📂 打开扫描目录" Style="{StaticResource ModernButtonStyle}" Height="26" Padding="8,0" FontSize="11" VerticalAlignment="Center" Click="OpenPluginScanFolderButton_Click" />
+              </Grid>
+              <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl Name="PluginCandidateItemsControl">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12,8" Margin="0,0,0,6">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                              <TextBlock Text="{Binding StatusGlyph}" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                              <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                              <TextBlock Text="{Binding VersionText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                              <Border Background="{DynamicResource SubtleCardBrush}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding StateText}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimaryBrush}" />
+                              </Border>
+                            </StackPanel>
+                            <TextBlock Text="{Binding SummaryText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,5,0,0" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Note}" FontSize="11" Foreground="#D97706" Margin="0,4,0,0" TextWrapping="Wrap">
+                              <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                  <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasNote}" Value="False">
+                                      <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding FileName}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap" Opacity="0.7" />
+                          </StackPanel>
+                          <Button Grid.Column="1" Content="{Binding InstallButtonText}" Tag="{Binding DllPath}" Click="InstallPluginCandidateButton_Click" Height="28" Padding="10,0" FontSize="11.5" VerticalAlignment="Top" Margin="10,0,0,0">
+                            <Button.Style>
+                              <Style TargetType="Button" BasedOn="{StaticResource ModernButtonStyle}">
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding CanInstall}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </Button.Style>
+                          </Button>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+
+          <!-- 插件列表 -->
+          <Grid Grid.Row="3">
+            <ListBox Name="PluginListBox" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="Padding" Value="0" />
+                  <Setter Property="Margin" Value="0,0,0,8" />
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+              </ListBox.ItemContainerStyle>
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding StatusGlyph}" FontSize="13" VerticalAlignment="Center" Margin="0,0,6,0" />
+                          <TextBlock Text="{Binding DisplayName}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                          <TextBlock Text="{Binding VersionText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                          <Border Background="{DynamicResource SubtleCardBrush}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StateText}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimaryBrush}" />
+                          </Border>
+                        </StackPanel>
+                        <TextBlock Text="{Binding SummaryText}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding DetailText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.8" />
+                        <TextBlock Text="{Binding ErrorText}" FontSize="11" Foreground="#DC2626" Margin="0,4,0,0" TextWrapping="Wrap">
+                          <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasError}" Value="False">
+                                  <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </TextBlock.Style>
+                        </TextBlock>
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                        <CheckBox Content="启用" Tag="{Binding PluginId}" IsChecked="{Binding IsEnabled, Mode=OneWay}" Click="PluginRowEnabledCheckBox_Click" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <Button Content="🗑 卸载" Tag="{Binding PluginId}" Click="UninstallPluginButton_Click" Style="{StaticResource ModernButtonStyle}" Height="26" Padding="8,0" Margin="10,0,0,0" FontSize="11" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- 空状态 -->
+            <StackPanel Name="PluginsEmptyStatePanel" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
+              <TextBlock Text="🧩" FontSize="42" HorizontalAlignment="Center" Opacity="0.35" />
+              <TextBlock Text="还没有安装任何插件" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0" HorizontalAlignment="Center" />
+              <TextBlock Text="把插件 .dll 放进程序目录的 plugin 文件夹并点上方「重新扫描」，或直接点右上角「安装插件 (.dll)」选择文件" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,6,0,0" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" Opacity="0.8" />
+            </StackPanel>
+          </Grid>
+        </Grid>
+
         <Grid Name="SystemSettingsGrid" Visibility="Collapsed">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

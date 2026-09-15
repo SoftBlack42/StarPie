@@ -77,6 +77,32 @@ def app(sandbox_env, request):
     except Exception:
         pass
 
+@pytest.fixture(scope="function")
+def advanced_mode(app):
+    """
+    与 `app` 完全一样，但在返回前把控制台切到「高级全量模式」。
+
+    **为什么需要它**：全新配置默认是**简洁模式**，而简洁模式会主动隐藏大量高级 UI ——
+    例如 NavTab2 的「画布联动精调 / 紧凑全览列表」整块分段切换器（并强制回到画布模式）、
+    NavTab1 的多张高级卡片、NavTab3 的 OCR 卡片。这是**设计如此**
+    （见 SettingsWindow.ApplyConfigMode），不是缺陷。
+
+    所以凡是断言这些高级 UI 的用例，都必须先切到高级模式；否则它断言的是
+    「简洁模式下本就不该出现的东西」，必然失败 —— 而那失败与被测功能毫无关系。
+
+    注意：切模式会改变 `FocusActionTypeComboBox` 的条目数（简洁模式过滤掉
+    Command 与 WindowManager 两个低频类型），所以断言动作类型数量的用例要自己想清楚
+    该用哪种模式，不要无脑套这个夹具。
+    """
+    win, local_app_data = app
+    radio = win.child_window(auto_id="ConfigModeProRadio", control_type="RadioButton")
+    assert radio.exists(timeout=5), "ConfigModeProRadio（高级全量模式）应存在于侧边栏"
+    radio.select()
+    # ApplyConfigMode 会一次性调整大量元素的可见性，给它足够时间完成布局
+    time.sleep(0.9)
+    return win, local_app_data
+
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield

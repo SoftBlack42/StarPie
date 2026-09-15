@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    StarPie 社区插件：屏幕亮度调节
+    ==================================================================
+    这个插件的价值不只是「能调亮度」，更是插件系统的**压力测试样本**，
+    因为它把一个插件能遇到的三类难题都覆盖了：
+
+      1. 需要 P/Invoke 原生 API（dxva2.dll 的 DDC/CI）——
+         验证插件能否安全地在独立加载上下文里调用非托管代码。
+      2. 需要 COM 互操作（WbemScripting.SWbemLocator 访问 root\wmi）——
+         验证「不引 NuGet、纯反射」这条路线是否可行。
+      3. 是耗时 IO（单次 DDC/CI 往返可达上百毫秒）——
+         验证 ActionKind.Background 确实不占用宿主的动作线程。
+
+    三条配置必须与示例插件保持一致，改错任何一条都会导致加载失败：
+
+    1. TargetFramework 不得高于宿主（net8.0-windows / net8.0-windows10.0.19041.0 都可以）。
+    2. ProjectReference 必须设 Private=false ——
+       否则产物里会多出一份 StarPie.Plugin.Abstractions.dll，
+       加载时出现两份 IStarPiePlugin 类型身份，强转全部失败。
+    3. 只能引用 StarPie.Plugin.Abstractions 与 BCL。
+       本插件刻意不引 System.Management，改用 Windows 自带的 WbemScripting COM 组件，
+       就是为了守住这条「零额外依赖」的底线。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+
+    <AssemblyName>StarPie.Plugin.ScreenBrightness</AssemblyName>
+    <RootNamespace>StarPie.Plugin.ScreenBrightness</RootNamespace>
+
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>StarPie 屏幕亮度插件</Product>
+    <Company>StarPie Community</Company>
+    <Description>通过 DDC/CI 与 WMI 双通道调节显示器亮度，支持外接显示器与笔记本内置屏。</Description>
+
+    <!-- 宿主是 x64；本插件要 P/Invoke 原生 API，明确按 x64 生成 -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=false 是「避免类型身份分裂」的关键，请勿删除。 -->
+    <ProjectReference Include="..\..\StarPie.Plugin.Abstractions\StarPie.Plugin.Abstractions.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- 程序集元数据：让「裸 DLL」分发形态也能被识别（带 plugin.json 时优先用清单） -->
+  <ItemGroup>
+    <AssemblyMetadata Include="StarPiePluginId" Value="com.example.screenbrightness" />
+    <AssemblyMetadata Include="StarPiePluginName" Value="屏幕亮度调节" />
+    <AssemblyMetadata Include="StarPiePluginCapabilities" Value="Process;Ui" />
+    <AssemblyMetadata Include="StarPiePluginLicense" Value="MIT" />
+    <AssemblyMetadata Include="StarPiePluginHomepage" Value="https://github.com/SoftBlack42/StarPie" />
+  </ItemGroup>
+
+  <!-- 清单随产物落地，使「输出目录」本身就是可分发的插件文件夹 -->
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
