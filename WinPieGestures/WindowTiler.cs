@@ -717,6 +717,175 @@ public static class WindowTiler
 		return true;
 	}
 
+	// ===== 启动后窗口定位辅助（供 ActionExecutor.Launch 兜底使用）=====
+
+	private const int SW_MAXIMIZE = 3;
+
+	/// <summary>启动后新窗口筛选时忽略的系统/壳层窗口类名。</summary>
+	private static readonly HashSet<string> s_launchIgnoredClasses = new HashSet<string>(StringComparer.Ordinal)
+	{
+		"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Progman", "WorkerW",
+		"tooltips_class32", "#32768", "ForegroundStaging", "NotifyIconOverflowWindow",
+		"Windows.UI.Core.CoreWindow", "Xaml_WindowedPopupClass", "TaskListThumbnailWnd",
+		"XamlExplorerHostIslandWindow", "Windows.Internal.Shell.TabProxyWindow"
+	};
+
+	/// <summary>快照当前所有顶层窗口句柄（含不可见），用于启动后比对新出现的窗口。线程安全（不使用共享枚举缓冲）。</summary>
+	public static HashSet<nint> SnapshotTopLevelWindows()
+	{
+		HashSet<nint> set = new HashSet<nint>();
+		try
+		{
+			EnumWindows(delegate(nint h, nint l)
+			{
+				set.Add(h);
+				return true;
+			}, IntPtr.Zero);
+		}
+		catch
+		{
+		}
+		return set;
+	}
+
+	/// <summary>
+	/// 判断窗口是否为值得搬移的应用主窗口（排除本进程、子窗口、工具窗与壳层/弹出类窗口）。
+	/// requireVisible=false 用于窗口刚创建尚未显示的场景：此时标题可能为空，改用外观样式判断。
+	/// </summary>
+	public static bool IsCandidateAppWindow(nint h, bool requireVisible)
+	{
+		try
+		{
+			if (h == IntPtr.Zero || !IsWindow(h))
+			{
+				return false;
+			}
+			if (requireVisible && (!IsWindowVisible(h) || IsWindowCloaked(h)))
+			{
+				return false;
+			}
+			GetWindowThreadProcessId(h, out uint pid);
+			if (pid == (uint)Environment.ProcessId)
+			{
+				return false;
+			}
+			long style = GetWindowLongPtr(h, GWL_STYLE).ToInt64();
+			if ((style & WS_CHILD) != 0L)
+			{
+				return false;
+			}
+			long exStyle = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+			if ((exStyle & WS_EX_TOOLWINDOW) != 0L)
+			{
+				return false;
+			}
+			string cls = GetClassNameSafe(h);
+			if (s_launchIgnoredClasses.Contains(cls))
+			{
+				return false;
+			}
+			if (requireVisible)
+			{
+				return TitleOf(h).Length > 0;
+			}
+			return (style & WS_CAPTION) == WS_CAPTION || (style & WS_THICKFRAME) != 0L || cls == "ApplicationFrameWindow";
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// 找出快照之后新出现的、可见且带标题的应用窗口。
+	/// </summary>
+	public static List<nint> FindNewAppWindows(HashSet<nint> snapshot)
+	{
+		List<nint> result = new List<nint>();
+		try
+		{
+			EnumWindows(delegate(nint h, nint l)
+			{
+				if (!snapshot.Contains(h) && IsCandidateAppWindow(h, requireVisible: true))
+				{
+					result.Add(h);
+				}
+				return true;
+			}, IntPtr.Zero);
+		}
+		catch
+		{
+		}
+		return result;
+	}
+
+	/// <summary>
+	/// 若窗口不在目标显示器上，则按其在当前屏工作区的相对位置比例平移到目标显示器工作区（保持尺寸、不抢焦点）。
+	/// 最大化窗口会先还原、移动后再最大化。返回 true 表示执行了移动。
+	/// </summary>
+	public static bool EnsureWindowOnMonitor(nint hWnd, nint hTargetMonitor)
+	{
+		try
+		{
+			if (hWnd == IntPtr.Zero || hTargetMonitor == IntPtr.Zero || !IsWindow(hWnd))
+			{
+				return false;
+			}
+			nint curMon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+			if (curMon == hTargetMonitor)
+			{
+				return false;
+			}
+			MONITORINFO mi = default;
+			mi.cbSize = Marshal.SizeOf<MONITORINFO>();
+			if (!GetMonitorInfo(hTargetMonitor, ref mi))
+			{
+				return false;
+			}
+			RECT nw = mi.rcWork;
+			// 尚未显示的窗口（创建阶段搬移）：不还原、不加 SWP_SHOWWINDOW，避免提前把它显示出来
+			bool visible = IsWindowVisible(hWnd);
+			bool wasZoomed = visible && IsZoomed(hWnd);
+			if (wasZoomed || (visible && IsIconic(hWnd)))
+			{
+				ShowWindow(hWnd, SW_RESTORE);
+			}
+			RECT cur;
+			GetWindowRect(hWnd, out cur);
+			if (cur.Right - cur.Left <= 0 || cur.Bottom - cur.Top <= 0)
+			{
+				return false; // 空矩形的隐藏辅助窗口，无需搬移
+			}
+			RECT curWork = WorkAreaOf(hWnd);
+			int curW = Math.Max(1, curWork.Right - curWork.Left);
+			int curH = Math.Max(1, curWork.Bottom - curWork.Top);
+			int fx = cur.Left - curWork.Left;
+			int fy = cur.Top - curWork.Top;
+			int targetW = Math.Max(1, nw.Right - nw.Left);
+			int targetH = Math.Max(1, nw.Bottom - nw.Top);
+			int w = Math.Min(Math.Max(1, cur.Right - cur.Left), targetW);
+			int h = Math.Min(Math.Max(1, cur.Bottom - cur.Top), targetH);
+			int x = nw.Left + (int)Math.Round((double)fx * targetW / curW);
+			int y = nw.Top + (int)Math.Round((double)fy * targetH / curH);
+			// 防止按比例映射后溢出目标工作区
+			x = Math.Max(nw.Left, Math.Min(x, nw.Right - w));
+			y = Math.Max(nw.Top, Math.Min(y, nw.Bottom - h));
+			uint flags = SWP_NOZORDER | SWP_NOACTIVATE | (visible ? SWP_SHOWWINDOW : 0u);
+			SetWindowPos(hWnd, HWND_TOP, x, y, w, h, flags);
+			if (wasZoomed)
+			{
+				ShowWindow(hWnd, SW_MAXIMIZE);
+			}
+			AppLogger.LogInfo($"[Launch] EnsureWindowOnMonitor: hwnd=0x{hWnd:X} '{TitleOf(hWnd)}' [{GetClassNameSafe(hWnd)}] {(visible ? "visible" : "hidden")} -> ({x},{y},{w}x{h}){(wasZoomed ? " maximized" : "")}");
+			return true;
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogWarn($"[Launch] EnsureWindowOnMonitor failed for 0x{hWnd:X}: {ex.Message}");
+			return false;
+		}
+	}
+
 	/// <summary>把当前前台窗口平移到下一台显示器（保持相对位置与尺寸）。</summary>
 	public static void MoveWindowToNextMonitor()
 	{
