@@ -209,6 +209,39 @@ public static class ActionExecutor
 	[DllImport("user32.dll", SetLastError = true)]
 	private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	private struct SHELLEXECUTEINFO
+	{
+		public int cbSize;
+		public uint fMask;
+		public nint hwnd;
+		[MarshalAs(UnmanagedType.LPWStr)] public string? lpVerb;
+		[MarshalAs(UnmanagedType.LPWStr)] public string? lpFile;
+		[MarshalAs(UnmanagedType.LPWStr)] public string? lpParameters;
+		[MarshalAs(UnmanagedType.LPWStr)] public string? lpDirectory;
+		public int nShow;
+		public nint hInstApp;
+		public nint lpIDList;
+		[MarshalAs(UnmanagedType.LPWStr)] public string? lpClass;
+		public nint hkeyClass;
+		public uint dwHotKey;
+		public nint hMonitor;
+		public nint hProcess;
+	}
+
+	private const uint SEE_MASK_NOCLOSEPROCESS = 0x00000040;
+	private const uint SEE_MASK_NOASYNC = 0x00000100;
+	private const uint SEE_MASK_HMONITOR = 0x00200000;
+
+	[DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	private static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	private static extern uint GetProcessId(nint hProcess);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	private static extern bool CloseHandle(nint hObject);
+
 	private static readonly Channel<ActionItem> s_actionChannel = Channel.CreateUnbounded<ActionItem>(new UnboundedChannelOptions
 	{
 		SingleReader = true,
@@ -1163,17 +1196,26 @@ public static class ActionExecutor
 		}
 		string text = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"'));
 		AppLogger.LogInfo($"Executing Launch: Path='{text}', Args='{arguments}', StandardUser={runAsStandardUser}");
+		// 目标显示器 = 鼠标当前所在显示器；启动前快照顶层窗口，供启动后识别新窗口并兜底搬到目标显示器
+		nint hMonitor = GetCursorMonitorHandle();
+		HashSet<nint> windowSnapshot = WindowTiler.SnapshotTopLevelWindows();
 		if (text.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase) || (text.Contains("!") && !text.Contains(":\\") && !text.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
 		{
 			string arguments2 = (text.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase) ? text : ("shell:AppsFolder\\" + text));
 			try
 			{
-				Process.Start(new ProcessStartInfo
+				// 优先直接 ShellExecuteEx 并携带鼠标所在显示器句柄；失败再回退 explorer.exe。
+				// 打包应用经激活管理器创建进程，显示器提示通常不会传递，因此再挂启动后兜底搬移
+				if (hMonitor == IntPtr.Zero || !TryShellExecuteOnMonitor(arguments2, null, null, hMonitor, out _))
 				{
-					FileName = "explorer.exe",
-					Arguments = arguments2,
-					UseShellExecute = true
-				});
+					Process.Start(new ProcessStartInfo
+					{
+						FileName = "explorer.exe",
+						Arguments = arguments2,
+						UseShellExecute = true
+					});
+				}
+				WatchAndRelocateNewWindows(hMonitor, windowSnapshot, null, text);
 			}
 			catch (Exception ex)
 			{
@@ -1195,6 +1237,8 @@ public static class ActionExecutor
 					if (TryLaunchUnelevatedViaExplorer(text, arguments ?? "", workDir))
 					{
 						AppLogger.LogInfo($"Launched '{text}' with Explorer standard user integrity via IShellDispatch2 (de-elevated)");
+						// IShellDispatch2 无法携带显示器句柄，只能靠启动后兜底搬移
+						WatchAndRelocateNewWindows(hMonitor, windowSnapshot, null, text);
 						return;
 					}
 				}
@@ -1237,7 +1281,15 @@ public static class ActionExecutor
 			}
 			try
 			{
-				System.Diagnostics.Process started = System.Diagnostics.Process.Start(processStartInfo);
+				// 携带鼠标所在显示器句柄启动（SEE_MASK_HMONITOR），新窗口默认落在当前屏幕而非主屏；
+				// ShellExecuteEx 失败时回退到 Process.Start 保持原有行为
+				System.Diagnostics.Process? started = null;
+				if (hMonitor == IntPtr.Zero || !TryShellExecuteOnMonitor(processStartInfo.FileName, processStartInfo.Arguments, processStartInfo.WorkingDirectory, hMonitor, out started))
+				{
+					started = System.Diagnostics.Process.Start(processStartInfo);
+				}
+				// 兜底：启动器转交（如 wt.exe 别名、Code.exe 启动器）或打包应用时显示器提示会丢失，启动后核对并搬移
+				WatchAndRelocateNewWindows(hMonitor, windowSnapshot, started, text);
 				// 启动后自动把新窗口拉到前台（后台等待主窗口出现 → ActivateWindow，含前台解锁链）
 				if (started != null)
 				{
@@ -1278,6 +1330,352 @@ public static class ActionExecutor
 	/// Issue #58: 当 StarPie 以管理员提权运行时，通过 Windows 资源管理器 (explorer.exe) 桌面 Shell 中转以标准普通用户权限 (Medium Integrity) 启动外部程序。
 	/// 解决以普通权限启动失效、终端仍带管理员盾牌、以及因 UIPI 隔离无法拖入外部文件的问题。
 	/// </summary>
+	/// <summary>
+	/// 启动后兜底：监视新出现的顶层应用窗口，若不在目标显示器上则平移过去。
+	/// 覆盖 ShellExecuteEx 显示器提示无法传递的场景：UWP/打包应用激活、标准用户降权启动、启动器转交。
+	/// 主路径为 WinEvent 钩子：EVENT_OBJECT_CREATE 时窗口尚未显示即搬移，避免先在主屏闪现再跳过去；
+	/// EVENT_OBJECT_SHOW 时再校正一次；后台轮询作为兜底。总时长 4s，首个窗口出现后再观察 1.5s。
+	/// </summary>
+	private static void WatchAndRelocateNewWindows(nint hMonitor, HashSet<nint> snapshot, Process? proc, string label)
+	{
+		if (hMonitor == IntPtr.Zero || snapshot == null)
+		{
+			return;
+		}
+		new LaunchRelocateSession(hMonitor, snapshot, proc, label).Start();
+	}
+
+	/// <summary>
+	/// 单次启动的窗口搬移会话。钩子回调（UI 线程）只负责入队，所有 SetWindowPos/ShowWindow 均在后台线程执行，
+	/// 避免目标进程初始化期间不泵消息导致 UI 线程被同步等待卡住。
+	/// </summary>
+	private sealed class LaunchRelocateSession
+	{
+		private delegate void WinEventDelegate(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
+
+		[DllImport("user32.dll")]
+		private static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+		[DllImport("user32.dll")]
+		private static extern bool UnhookWinEvent(nint hWinEventHook);
+
+		private const uint EVENT_OBJECT_CREATE = 0x8000;
+		private const uint EVENT_OBJECT_SHOW = 0x8002;
+		private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+		private const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+		private const int TotalTimeoutMs = 4000;
+		private const int SettleMs = 1500;
+
+		private readonly nint _hMonitor;
+		private readonly HashSet<nint> _snapshot;
+		private readonly Process? _proc;
+		private readonly string _label;
+		private readonly WinEventDelegate _hookProc; // 持有委托引用，防止钩子存活期间被 GC 回收
+		private readonly Stopwatch _clock = Stopwatch.StartNew();
+		private readonly object _lock = new object();
+		private readonly HashSet<nint> _handled = new HashSet<nint>();
+		private readonly HashSet<nint> _created = new HashSet<nint>();
+		private readonly Queue<(nint hwnd, string stage)> _pending = new Queue<(nint, string)>();
+		private readonly AutoResetEvent _wake = new AutoResetEvent(false);
+		private nint _hook;
+		private long _settleDeadline = -1;
+		private volatile bool _stopped;
+
+		public LaunchRelocateSession(nint hMonitor, HashSet<nint> snapshot, Process? proc, string label)
+		{
+			_hMonitor = hMonitor;
+			_snapshot = snapshot;
+			_proc = proc;
+			_label = label;
+			_hookProc = OnWinEvent;
+		}
+
+		public void Start()
+		{
+			System.Windows.Threading.Dispatcher? dispatcher = Application.Current?.Dispatcher;
+			if (dispatcher != null)
+			{
+				dispatcher.BeginInvoke(new Action(delegate
+				{
+					if (_stopped)
+					{
+						return;
+					}
+					try
+					{
+						_hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, IntPtr.Zero, _hookProc, 0u, 0u, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+					}
+					catch (Exception ex)
+					{
+						AppLogger.LogWarn($"[Launch] SetWinEventHook failed: {ex.Message}");
+					}
+				}));
+			}
+			System.Threading.Tasks.Task.Run(WorkerLoop);
+		}
+
+		/// <summary>钩子回调（UI 线程）：仅筛选并入队，立即返回。</summary>
+		private void OnWinEvent(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint dwmsEventTime)
+		{
+			try
+			{
+				if (_stopped || hwnd == IntPtr.Zero || idObject != 0 || idChild != 0)
+				{
+					return;
+				}
+				if (eventType == EVENT_OBJECT_CREATE)
+				{
+					if (!WindowTiler.IsCandidateAppWindow(hwnd, requireVisible: false))
+					{
+						return;
+					}
+					lock (_lock)
+					{
+						_created.Add(hwnd);
+						_pending.Enqueue((hwnd, "create"));
+					}
+					_wake.Set();
+				}
+				else if (eventType == EVENT_OBJECT_SHOW)
+				{
+					// 仅处理本会话期间新建的窗口，避免把旧窗口的重新显示（如取消最小化）误搬
+					bool isNew;
+					lock (_lock)
+					{
+						isNew = _created.Contains(hwnd) || !_snapshot.Contains(hwnd);
+					}
+					if (!isNew || !WindowTiler.IsCandidateAppWindow(hwnd, requireVisible: false))
+					{
+						return;
+					}
+					lock (_lock)
+					{
+						_pending.Enqueue((hwnd, "show"));
+					}
+					_wake.Set();
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private void WorkerLoop()
+		{
+			try
+			{
+				while (_clock.ElapsedMilliseconds < TotalTimeoutMs)
+				{
+					_wake.WaitOne(50);
+					while (true)
+					{
+						(nint hwnd, string stage) item;
+						lock (_lock)
+						{
+							if (_pending.Count == 0)
+							{
+								break;
+							}
+							item = _pending.Dequeue();
+						}
+						// show 阶段允许对已处理窗口再校正一次：部分程序在显示前会自行重设位置
+						Handle(item.hwnd, item.stage, firstOnly: item.stage != "show");
+					}
+					foreach (nint h in WindowTiler.FindNewAppWindows(_snapshot))
+					{
+						Handle(h, "poll", firstOnly: true);
+					}
+					if (_proc != null)
+					{
+						try
+						{
+							_proc.Refresh();
+							nint mw = _proc.MainWindowHandle;
+							if (mw != IntPtr.Zero)
+							{
+								Handle(mw, "main", firstOnly: true);
+							}
+						}
+						catch
+						{
+						}
+					}
+					long settle = Interlocked.Read(ref _settleDeadline);
+					if (settle >= 0 && _clock.ElapsedMilliseconds >= settle)
+					{
+						break;
+					}
+				}
+				bool none;
+				lock (_lock)
+				{
+					none = _handled.Count == 0;
+				}
+				if (none)
+				{
+					AppLogger.LogInfo($"[Launch] No new window detected within {TotalTimeoutMs}ms for '{_label}'");
+				}
+			}
+			catch (Exception ex)
+			{
+				AppLogger.LogWarn($"[Launch] Relocate session failed for '{_label}': {ex.Message}");
+			}
+			finally
+			{
+				Stop();
+			}
+		}
+
+		private void Handle(nint hwnd, string stage, bool firstOnly)
+		{
+			bool isNew;
+			lock (_lock)
+			{
+				isNew = _handled.Add(hwnd);
+			}
+			if (!isNew && firstOnly)
+			{
+				return;
+			}
+			bool moved = WindowTiler.EnsureWindowOnMonitor(hwnd, _hMonitor);
+			if (isNew || moved)
+			{
+				AppLogger.LogInfo($"[Launch] Window 0x{hwnd:X} ({stage}) for '{_label}': {(moved ? "moved to cursor monitor" : "already on cursor monitor")}");
+			}
+			if (Interlocked.Read(ref _settleDeadline) < 0)
+			{
+				Interlocked.Exchange(ref _settleDeadline, _clock.ElapsedMilliseconds + SettleMs);
+			}
+		}
+
+		private void Stop()
+		{
+			if (_stopped)
+			{
+				return;
+			}
+			_stopped = true;
+			System.Windows.Threading.Dispatcher? dispatcher = Application.Current?.Dispatcher;
+			if (dispatcher == null)
+			{
+				return;
+			}
+			// UnhookWinEvent 必须在安装钩子的线程上调用
+			dispatcher.BeginInvoke(new Action(delegate
+			{
+				try
+				{
+					if (_hook != IntPtr.Zero)
+					{
+						UnhookWinEvent(_hook);
+						_hook = IntPtr.Zero;
+					}
+				}
+				catch
+				{
+				}
+				_wake.Dispose();
+			}));
+		}
+	}
+
+	/// <summary>
+	/// 获取鼠标当前所在显示器的句柄（失败返回 IntPtr.Zero）
+	/// </summary>
+	private static nint GetCursorMonitorHandle()
+	{
+		try
+		{
+			return ScreenHelper.GetScreenContextAtPoint().HMonitor;
+		}
+		catch
+		{
+			return IntPtr.Zero;
+		}
+	}
+
+	/// <summary>
+	/// 通过 ShellExecuteEx + SEE_MASK_HMONITOR 在指定显示器上启动目标。
+	/// 对于不自行记忆窗口位置的程序，系统会把其首个窗口放在该显示器上，而不是主屏幕。
+	/// 返回 false 表示调用失败，调用方应回退到 Process.Start。
+	/// </summary>
+	private static bool TryShellExecuteOnMonitor(string file, string? arguments, string? workingDir, nint hMonitor, out Process? process)
+	{
+		process = null;
+		if (string.IsNullOrWhiteSpace(file))
+		{
+			return false;
+		}
+		SHELLEXECUTEINFO info = new SHELLEXECUTEINFO
+		{
+			cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
+			fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_HMONITOR,
+			hwnd = IntPtr.Zero,
+			lpVerb = null,
+			lpFile = file,
+			lpParameters = string.IsNullOrEmpty(arguments) ? null : arguments,
+			lpDirectory = string.IsNullOrEmpty(workingDir) ? null : workingDir,
+			nShow = SW_SHOWNORMAL,
+			hMonitor = hMonitor
+		};
+		bool ok = false;
+		int lastError = 0;
+		try
+		{
+			// ShellExecuteEx 需要 STA 公寓（与 .NET Process.Start 内部处理一致）；
+			// 动作队列工作线程是 MTA，因此在独立 STA 线程上同步执行
+			if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+			{
+				ok = ShellExecuteEx(ref info);
+				lastError = Marshal.GetLastWin32Error();
+			}
+			else
+			{
+				SHELLEXECUTEINFO localInfo = info;
+				Thread staThread = new Thread(() =>
+				{
+					ok = ShellExecuteEx(ref localInfo);
+					lastError = Marshal.GetLastWin32Error();
+				});
+				staThread.SetApartmentState(ApartmentState.STA);
+				staThread.IsBackground = true;
+				staThread.Start();
+				staThread.Join();
+				info = localInfo;
+			}
+		}
+		catch (Exception ex)
+		{
+			AppLogger.LogWarn($"ShellExecuteEx threw for '{file}': {ex.Message}");
+			return false;
+		}
+		if (!ok)
+		{
+			AppLogger.LogWarn($"ShellExecuteEx failed for '{file}' (error {lastError}), falling back to Process.Start");
+			return false;
+		}
+		if (info.hProcess != IntPtr.Zero)
+		{
+			try
+			{
+				uint pid = GetProcessId(info.hProcess);
+				if (pid != 0)
+				{
+					process = Process.GetProcessById((int)pid);
+				}
+			}
+			catch
+			{
+				// 进程可能已退出（例如启动器立即转交给已有实例），忽略即可
+			}
+			finally
+			{
+				CloseHandle(info.hProcess);
+			}
+		}
+		return true;
+	}
+
 	public static bool TryLaunchUnelevatedViaExplorer(string path, string arguments, string workingDir)
 	{
 		try
